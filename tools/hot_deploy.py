@@ -19,7 +19,7 @@ USER = "admin"
 PORT = 22
 FALLBACK_PASS = "D:/work/M365-fpk/.nas_pass"
 APP_ID = "agnes-hub"
-APP_BIN = "/vol1/@appcenter/%s/app/baipiao-hub" % APP_ID
+APP_BIN = "/vol1/@appcenter/%s/app/agnes-hub-go" % APP_ID
 DATA_DIR = "/vol1/@appdata/%s" % APP_ID
 PORT_NUM = 4142
 
@@ -92,12 +92,12 @@ class Nas:
     def close(self): self.client.close()
 
 def running_pids(nas):
-    out = nas.plain("pgrep -f '%s/app/baipiao-hub' || true" % APP_ID, label="pgrep")
+    out = nas.plain("pgrep -f '%s/app/agnes-hub-go' || true" % APP_ID, label="pgrep")
     pids = [p.strip() for p in out.split() if p.strip().isdigit()]
     return pids
 
 def main():
-    local_bin = "D:/work/GitHub/agnes-hub-go/dist/baipiao-hub-linux-amd64"
+    local_bin = "D:/work/GitHub/agnes-hub-go/dist/agnes-hub-go-linux-amd64"
     if not os.path.exists(local_bin):
         sys.exit("[ERROR] 本地二进制缺失: %s" % local_bin)
 
@@ -138,7 +138,7 @@ def main():
         log("确认 NO_PROC（进程已清空）")
 
     # 3) 上传 + 覆盖
-    remote_tmp = "/tmp/baipiao-hub.new"
+    remote_tmp = "/tmp/agnes-hub-go.new"
     log("上传新二进制 -> %s" % remote_tmp)
     nas.put(local_bin, remote_tmp)
     log("覆盖二进制 + chown + chmod 755")

@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""baipiao-hub/agnes-hub 飞牛 NAS 干净重装：备份 -> 卸载 -> install-fpk(1.0.11) -> 恢复数据 -> 验证。
+"""agnes-hub-go/agnes-hub 飞牛 NAS 干净重装：备份 -> 卸载 -> install-fpk(1.0.11) -> 恢复数据 -> 验证。
 
-前提：fpk 已用正确 appname=agnes-hub、清理过 {} / → 字符、display_name=白嫖 Hub。
+前提：fpk 已用正确 appname=agnes-hub、清理过 {} / → 字符、display_name=Agnes Hub。
 安全：先完整备份 @appdata/agnes-hub（账号/设置/对话），并把当前 app 目录也备份以便回滚。
 """
 import os, sys, tempfile, time
@@ -19,7 +19,7 @@ VER=1.0.11
 PORT=4142
 S=$(echo $VER | tr -d .)
 BACKUP=/vol1/@appdata/${APP_ID}-data.PRE${S}.bak
-SAFE=/vol1/baipiao_backup_PRE${S}      # 中立位置，卸载不会被删
+SAFE=/vol1/agnes_backup_PRE${S}      # 中立位置，卸载不会被删
 APPBACKUP=/vol1/@appdata/${APP_ID}-app.PRE${S}.bak
 
 echo "=== 1) 备份数据(账号/设置/对话) ==="
@@ -39,9 +39,9 @@ echo "   app 备份完成: $APPBACKUP"
 
 echo "=== 3) 停服 ==="
 appcenter-cli stop $APP_ID || true
-pkill -9 -f baipiao-hub || true
+pkill -9 -f agnes-hub-go || true
 sleep 2
-echo "   残留进程: $(pgrep -af baipiao-hub || echo NONE)"
+echo "   残留进程: $(pgrep -af agnes-hub-go || echo NONE)"
 
 echo "=== 4) 卸载 ==="
 appcenter-cli uninstall $APP_ID
@@ -50,7 +50,7 @@ echo "   卸载后列表:"; appcenter-cli list 2>/dev/null | grep -i agnes || ec
 echo "   卸载后中立备份是否存活: $([ -d "$SAFE" ] && echo YES || echo NO)"
 
 echo "=== 5) install-fpk 1.0.11 ==="
-appcenter-cli install-fpk /tmp/baipiao-hub-$VER.fpk
+appcenter-cli install-fpk /tmp/agnes-hub-go-$VER.fpk
 sleep 3
 echo "   安装后列表:"; appcenter-cli list 2>/dev/null | grep -i agnes
 if ! appcenter-cli list 2>/dev/null | grep -qi "$APP_ID"; then
@@ -71,8 +71,8 @@ echo "=== 8) 重启加载数据并终检 ==="
 appcenter-cli stop $APP_ID || true; sleep 1; appcenter-cli start $APP_ID; sleep 4
 echo "   healthz: $(curl -s http://127.0.0.1:$PORT/healthz)"
 curl -s -o /dev/null -w "   console HTTP=%{http_code} size=%{size_download}\n" http://127.0.0.1:$PORT/console
-echo "   内嵌 editModal=$(grep -ac editAccountModal /vol1/@appcenter/$APP_ID/app/baipiao-hub 2>/dev/null)"
-echo "   内嵌 rpmOverride=$(grep -ac rpm_overrides /vol1/@appcenter/$APP_ID/app/baipiao-hub 2>/dev/null)"
+echo "   内嵌 editModal=$(grep -ac editAccountModal /vol1/@appcenter/$APP_ID/app/agnes-hub-go 2>/dev/null)"
+echo "   内嵌 rpmOverride=$(grep -ac rpm_overrides /vol1/@appcenter/$APP_ID/app/agnes-hub-go 2>/dev/null)"
 """
 
 def load_password():
@@ -115,11 +115,11 @@ def main():
     host = sys.argv[1] if len(sys.argv) > 1 else "nas.lianu.com"
     nas = Nas(host, "admin", load_password(), 22)
     # 上传 fpk 与脚本
-    nas.put(os.path.join(ROOT, "dist", "baipiao-hub-1.0.11.fpk"), "/tmp/baipiao-hub-1.0.11.fpk")
+    nas.put(os.path.join(ROOT, "dist", "agnes-hub-go-1.0.11.fpk"), "/tmp/agnes-hub-go-1.0.11.fpk")
     with tempfile.NamedTemporaryFile("w", suffix=".sh", delete=False, encoding="utf-8", newline="\n") as tf:
         tf.write(REINSTALL_SH); local_sh = tf.name
-    nas.put(local_sh, "/tmp/baipiao_reinstall.sh")
-    print(nas.sudo("bash /tmp/baipiao_reinstall.sh", timeout=240))
+    nas.put(local_sh, "/tmp/agnes_reinstall.sh")
+    print(nas.sudo("bash /tmp/agnes_reinstall.sh", timeout=240))
     nas.close()
 
 if __name__ == "__main__":

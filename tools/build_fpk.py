@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""构建 baipiao-hub 的飞牛 fnOS fpk 安装包。
+"""构建 agnes-hub-go 的飞牛 fnOS fpk 安装包。
 
 为什么手写 tarfile 而不用 fnpack：
     本机 fnpack.exe 在 MSYS 环境下 `build` 必然失败
@@ -16,8 +16,8 @@
       ├── config/               privilege + resource（缺失会被应用中心拒绝）
       ├── wizard/install        无交互安装向导（空数组即可）
       └── app.tgz               内层 tar.gz，只放 app/ 双架构二进制
-          ├── app/baipiao-hub
-          └── app/baipiao-hub-arm64
+          ├── app/agnes-hub-go
+          └── app/agnes-hub-go-arm64
 
 关键坑：cmd/config/wizard 必须放在**外层** tar；塞进 app.tgz 会导致
 应用中心找不到 cmd/main 而安装失败。fnOS 不要求独立的 manifest.checksum 文件。
@@ -65,7 +65,7 @@ VERSION = _version_from_main_go()
 # 这里直接取 VERSION，单一来源。
 VERSION_TAG = VERSION
 # 由 VERSION 推导，避免两处手改不同步导致产物名和 manifest 版本对不上。
-FPK_NAME = "baipiao-hub-%s.fpk" % VERSION
+FPK_NAME = "agnes-hub-go-%s.fpk" % VERSION
 APP_DIR = os.path.join(FPK_DIR, "app")
 CMD_DIR = os.path.join(FPK_DIR, "cmd")
 WIZARD_DIR = os.path.join(FPK_DIR, "wizard")
@@ -105,8 +105,8 @@ PORT="${AGNES_HUB_PORT:-%PORT%}"
 # 定位二进制：兼容 $APP_DIR/$APP_ID/app/、$APP_DIR/app/ 以及历史残留路径
 ARCH=$(uname -m)
 case "$ARCH" in
-  x86_64|amd64) BIN_NAME="baipiao-hub" ;;
-  aarch64|arm64) BIN_NAME="baipiao-hub-arm64" ;;
+  x86_64|amd64) BIN_NAME="agnes-hub-go" ;;
+  aarch64|arm64) BIN_NAME="agnes-hub-go-arm64" ;;
   *) echo "unsupported arch: $ARCH" > "$TRIM_TEMP_LOGFILE"; exit 1 ;;
 esac
 
@@ -200,11 +200,11 @@ UPGRADE_INIT = '''#!/bin/bash
 APP_ID="agnes-hub"
 
 # 1. 安全停服：按 exe 路径精确匹配，避免杀掉钩子脚本自身
-for pid in $(pgrep -f "baipiao-hub" 2>/dev/null); do
+for pid in $(pgrep -f "agnes-hub-go" 2>/dev/null); do
   [ "$pid" = "$$" ] && continue
   exe=$(readlink "/proc/$pid/exe" 2>/dev/null) || continue
   case "$exe" in
-    */baipiao-hub) kill "$pid" 2>/dev/null || true ;;
+    */agnes-hub-go) kill "$pid" 2>/dev/null || true ;;
   esac
 done
 sleep 1
@@ -230,7 +230,7 @@ BASES=""
 [ -n "${TRIM_PKGROOT:-}" ] && BASES="$BASES $TRIM_PKGROOT"
 for base in $BASES; do
   [ -d "$base" ] || continue
-  for cand in "$base/$APP_ID/app/baipiao-hub" "$base/$APP_ID/app/baipiao-hub-arm64" "$base/$APP_ID/baipiao-hub" "$base/$APP_ID/baipiao-hub-arm64" "$base/app/baipiao-hub" "$base/app/baipiao-hub-arm64" "$base/baipiao-hub" "$base/baipiao-hub-arm64"; do
+  for cand in "$base/$APP_ID/app/agnes-hub-go" "$base/$APP_ID/app/agnes-hub-go-arm64" "$base/$APP_ID/agnes-hub-go" "$base/$APP_ID/agnes-hub-go-arm64" "$base/app/agnes-hub-go" "$base/app/agnes-hub-go-arm64" "$base/agnes-hub-go" "$base/agnes-hub-go-arm64"; do
     [ -f "$cand" ] || continue
     grep -aq "%VERSION_TAG%" "$cand" 2>/dev/null || rm -f "$cand" 2>/dev/null || true
   done
@@ -265,7 +265,7 @@ BASES=""
 [ -n "${TRIM_PKGROOT:-}" ] && BASES="$BASES $TRIM_PKGROOT"
 for base in $BASES; do
   [ -d "$base" ] || continue
-  for cand in "$base/$APP_ID/app/baipiao-hub" "$base/$APP_ID/app/baipiao-hub-arm64" "$base/$APP_ID/baipiao-hub" "$base/$APP_ID/baipiao-hub-arm64" "$base/app/baipiao-hub" "$base/app/baipiao-hub-arm64" "$base/baipiao-hub" "$base/baipiao-hub-arm64"; do
+  for cand in "$base/$APP_ID/app/agnes-hub-go" "$base/$APP_ID/app/agnes-hub-go-arm64" "$base/$APP_ID/agnes-hub-go" "$base/$APP_ID/agnes-hub-go-arm64" "$base/app/agnes-hub-go" "$base/app/agnes-hub-go-arm64" "$base/agnes-hub-go" "$base/agnes-hub-go-arm64"; do
     [ -f "$cand" ] || continue
     grep -aq "%VERSION_TAG%" "$cand" 2>/dev/null || rm -f "$cand" 2>/dev/null || true
   done
@@ -280,11 +280,11 @@ UNINSTALL_INIT = '''#!/bin/bash
 APP_ID="agnes-hub"
 
 # 1. 停服
-for pid in $(pgrep -f "baipiao-hub" 2>/dev/null); do
+for pid in $(pgrep -f "agnes-hub-go" 2>/dev/null); do
   [ "$pid" = "$$" ] && continue
   exe=$(readlink "/proc/$pid/exe" 2>/dev/null) || continue
   case "$exe" in
-    */baipiao-hub) kill "$pid" 2>/dev/null || true ;;
+    */agnes-hub-go) kill "$pid" 2>/dev/null || true ;;
   esac
 done
 sleep 1
@@ -371,7 +371,7 @@ CHANGELOG = (
     "用量日志「用户请求」列新增悬停浮层（可滚动看完整请求原文，替代渲染不全的原生提示）；移除顶部强制改密横幅，修正两个开关项的排版错位。"
     "1.0.16：修复控制台日志页「用户输入(user_request)」不显示的回归（1.0.15 起异步批量落盘后，刚发完的请求要等 30s 才上盘、日志页读不到；现日志页实时合并尚未落盘的内存记录）；"
     "补漏粘性绑定 Bind 的热路径同步写盘（此前每个带会话头的请求都全量写 bindings.json，现改为内存 + 30s 批量落盘，与密钥记账/用量日志同口径，多任务并发尾延迟进一步下降）；"
-    "修正控制台「查看全部版本」链接指向（baipiao-hub → agnes-hub-go）。"
+    "修正控制台「查看全部版本」链接指向，统一产品命名为 agnes-hub-go。"
     "1.0.15：新增「运行情景模式」——控制台设置页可选 代码/图片/自动/多任务并行/批处理 等情景一键调参（安全系数/文本 RPM/重试/排队/并发等随情景联动，账号级 RPM 覆盖仍优先），热重载即时生效；"
     "热路径异步落盘（密钥记账与用量日志改内存累加 + 维护循环 30s 批量写盘，消除每请求同步磁盘 I/O，多任务高频并发尾延迟显著下降）；"
     "上游 429 透传自动补 Retry-After（按池投影等待计算，免费号无头时也能给客户端可重试间隔），/healthz 新增 text_projected_wait_ms 排队可观测；"
@@ -414,8 +414,8 @@ def prepare():
         os.makedirs(d, exist_ok=True)
 
     # 1. 二进制
-    for src, dst in (("baipiao-hub-linux-amd64", "baipiao-hub"),
-                     ("baipiao-hub-linux-arm64", "baipiao-hub-arm64")):
+    for src, dst in (("agnes-hub-go-linux-amd64", "agnes-hub-go"),
+                     ("agnes-hub-go-linux-arm64", "agnes-hub-go-arm64")):
         s = os.path.join(ROOT, src)
         if not os.path.exists(s):
             sys.exit("[ERROR] 缺少交叉编译产物 %s，请先执行 build_linux.sh 或 go build" % src)
@@ -430,13 +430,13 @@ def prepare():
                  "uninstall_callback"):
         _write(os.path.join(CMD_DIR, name), TRIVIAL)
     _write(os.path.join(CMD_DIR, "config_init"),
-           "#!/bin/bash\npkill -f 'baipiao-hub' 2>/dev/null || true\nexit 0\n")
+           "#!/bin/bash\npkill -f 'agnes-hub-go' 2>/dev/null || true\nexit 0\n")
 
     # 3. wizard（必须是非空数组，且 items 不能为空——fnOS 会报 "wizard items is empty"）
     # 注意：必须有 password 类型字段，否则校验失败（code 10150）
     # 参考 M365/Copilot2API 和 jdbeanbot 的 wizard/install 格式
     wizard_content = json.dumps([{
-        "stepTitle": "白嫖 Hub 配置",
+        "stepTitle": "Agnes Hub 配置",
         "items": [
             {
                 "type": "password",
@@ -472,8 +472,8 @@ def prepare():
     field_pairs = [
         ("appname", APP_ID),
         ("version", VERSION),
-        ("display_name", "白嫖 Hub"),
-        ("desc", "白嫖 Hub：免费 API 资源聚合中转网关，支持 agnes / AMD / NVIDIA / M365 / OpenRouter 等多渠道账号统一调度与 RPM 限流排队；统一模型 agnes-auto 自动判定文生/生图/生视频；"
+        ("display_name", "Agnes Hub"),
+        ("desc", "Agnes Hub：免费 API 资源聚合中转网关，支持 agnes / AMD / NVIDIA / M365 / OpenRouter 等多渠道账号统一调度与 RPM 限流排队；统一模型 agnes-auto 自动判定文生/生图/生视频；"
                   "FIFO 严格节拍、软粘性溢出、二维自适应校准、熔断自动复活。内置 /chat 网页对话 UI（对话记录持久化、agnes-3.0-flash 默认模型）；飞牛端安装后生成桌面快捷方式，点击打开控制台。"),
         ("source", "thirdparty"),
         ("platform", "x86"),
@@ -581,8 +581,8 @@ def build_inner():
         tar.addfile(ti)
 
         # 二进制放在 app/ 下
-        for src_name, dst_name in (("baipiao-hub-linux-amd64", "baipiao-hub"),
-                                    ("baipiao-hub-linux-arm64", "baipiao-hub-arm64")):
+        for src_name, dst_name in (("agnes-hub-go-linux-amd64", "agnes-hub-go"),
+                                    ("agnes-hub-go-linux-arm64", "agnes-hub-go-arm64")):
             src = os.path.join(ROOT, src_name)
             if not os.path.exists(src):
                 sys.exit("[ERROR] 缺少交叉编译产物 %s，请先执行 build_linux.sh 或 go build" % src_name)

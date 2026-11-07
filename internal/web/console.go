@@ -32,8 +32,8 @@ var chatMainJS []byte
 //go:embed static/logo.png
 var logoPNG []byte
 
-const cookieName = "baipiao_hub_session"
-const chatPasswordCookie = "baipiao_chat_password"
+const cookieName = "agnes_hub_session"
+const chatPasswordCookie = "agnes_chat_password"
 
 func (s *Server) consoleRoutes() {
 	m := s.mux
@@ -1932,7 +1932,7 @@ func (s *Server) handleChatProxy(w http.ResponseWriter, r *http.Request) {
 			out.result.Close()
 			return
 		case <-time.After(time.Duration(settings.KeepaliveMS) * time.Millisecond):
-			writeSSEComment(w, flusher, "baipiao-hub chat proxy keepalive")
+			writeSSEComment(w, flusher, "agnes-hub-go chat proxy keepalive")
 		case <-ctx2.Done():
 			return
 		}

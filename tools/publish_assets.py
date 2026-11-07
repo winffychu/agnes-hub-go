@@ -14,8 +14,8 @@ Release 里、缺的没传。本脚本可安全重跑：
 - 每个资产 5 次重试，容忍 SSL 瞬断 / 连接错误 / 超时。
 
 产物路径约定（与 release.py 一致）：
-    dist/baipiao-hub-{v}.fpk, dist/agnes-hub-go-windows-{v}.zip,
-    baipiao-hub-linux-amd64, baipiao-hub-linux-arm64, agnes-hub-go.exe
+    dist/agnes-hub-go-{v}.fpk, dist/agnes-hub-go-windows-{v}.zip,
+    agnes-hub-go-linux-amd64, agnes-hub-go-linux-arm64, agnes-hub-go.exe
 """
 import os
 import re
@@ -93,9 +93,9 @@ def main():
     print(f"[release] id={rel_id} 已传 {len(have)} 件：{sorted(have)}")
 
     assets = [
-        ("baipiao-hub-%s.fpk" % v, os.path.join(DIST, "baipiao-hub-%s.fpk" % v), "application/octet-stream"),
-        ("baipiao-hub-linux-amd64", os.path.join(ROOT, "baipiao-hub-linux-amd64"), "application/octet-stream"),
-        ("baipiao-hub-linux-arm64", os.path.join(ROOT, "baipiao-hub-linux-arm64"), "application/octet-stream"),
+        ("agnes-hub-go-%s.fpk" % v, os.path.join(DIST, "agnes-hub-go-%s.fpk" % v), "application/octet-stream"),
+        ("agnes-hub-go-linux-amd64", os.path.join(ROOT, "agnes-hub-go-linux-amd64"), "application/octet-stream"),
+        ("agnes-hub-go-linux-arm64", os.path.join(ROOT, "agnes-hub-go-linux-arm64"), "application/octet-stream"),
         ("agnes-hub-go-windows-%s.zip" % v, os.path.join(DIST, "agnes-hub-go-windows-%s.zip" % v), "application/zip"),
         ("agnes-hub-go.exe", os.path.join(ROOT, "agnes-hub-go.exe"), "application/octet-stream"),
     ]

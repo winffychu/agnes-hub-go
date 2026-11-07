@@ -480,116 +480,116 @@ func (s *Server) handleMetrics(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var sb strings.Builder
-	sb.WriteString("# HELP baiPiao_hub_requests_total Total requests served\n")
-	sb.WriteString("# TYPE baiPiao_hub_requests_total counter\n")
-	sb.WriteString(fmt.Sprintf("baiPiao_hub_requests_total %d\n", m.RequestsTotal.Load()))
+	sb.WriteString("# HELP agnes_hub_requests_total Total requests served\n")
+	sb.WriteString("# TYPE agnes_hub_requests_total counter\n")
+	sb.WriteString(fmt.Sprintf("agnes_hub_requests_total %d\n", m.RequestsTotal.Load()))
 
-	sb.WriteString("# HELP baiPiao_hub_requests_ok Successful requests\n")
-	sb.WriteString("# TYPE baiPiao_hub_requests_ok counter\n")
-	sb.WriteString(fmt.Sprintf("baiPiao_hub_requests_ok %d\n", m.RequestsOK.Load()))
+	sb.WriteString("# HELP agnes_hub_requests_ok Successful requests\n")
+	sb.WriteString("# TYPE agnes_hub_requests_ok counter\n")
+	sb.WriteString(fmt.Sprintf("agnes_hub_requests_ok %d\n", m.RequestsOK.Load()))
 
-	sb.WriteString("# HELP baiPiao_hub_requests_error Failed requests\n")
-	sb.WriteString("# TYPE baiPiao_hub_requests_error counter\n")
-	sb.WriteString(fmt.Sprintf("baiPiao_hub_requests_error %d\n", m.RequestsError.Load()))
+	sb.WriteString("# HELP agnes_hub_requests_error Failed requests\n")
+	sb.WriteString("# TYPE agnes_hub_requests_error counter\n")
+	sb.WriteString(fmt.Sprintf("agnes_hub_requests_error %d\n", m.RequestsError.Load()))
 
-	sb.WriteString("# HELP baiPiao_hub_upstream_429 Upstream 429s received\n")
-	sb.WriteString("# TYPE baiPiao_hub_upstream_429 counter\n")
-	sb.WriteString(fmt.Sprintf("baiPiao_hub_upstream_429 %d\n", m.Upstream429.Load()))
+	sb.WriteString("# HELP agnes_hub_upstream_429 Upstream 429s received\n")
+	sb.WriteString("# TYPE agnes_hub_upstream_429 counter\n")
+	sb.WriteString(fmt.Sprintf("agnes_hub_upstream_429 %d\n", m.Upstream429.Load()))
 
-	sb.WriteString("# HELP baiPiao_hub_queued_total Requests that had to wait in queue\n")
-	sb.WriteString("# TYPE baiPiao_hub_queued_total counter\n")
-	sb.WriteString(fmt.Sprintf("baiPiao_hub_queued_total %d\n", m.QueuedTotal.Load()))
+	sb.WriteString("# HELP agnes_hub_queued_total Requests that had to wait in queue\n")
+	sb.WriteString("# TYPE agnes_hub_queued_total counter\n")
+	sb.WriteString(fmt.Sprintf("agnes_hub_queued_total %d\n", m.QueuedTotal.Load()))
 
-	sb.WriteString("# HELP baiPiao_hub_queue_timeout Requests that timed out waiting\n")
-	sb.WriteString("# TYPE baiPiao_hub_queue_timeout counter\n")
-	sb.WriteString(fmt.Sprintf("baiPiao_hub_queue_timeout %d\n", m.QueueTimeout.Load()))
+	sb.WriteString("# HELP agnes_hub_queue_timeout Requests that timed out waiting\n")
+	sb.WriteString("# TYPE agnes_hub_queue_timeout counter\n")
+	sb.WriteString(fmt.Sprintf("agnes_hub_queue_timeout %d\n", m.QueueTimeout.Load()))
 
-	sb.WriteString("# HELP baiPiao_hub_queue_overflow Requests dropped because queue full\n")
-	sb.WriteString("# TYPE baiPiao_hub_queue_overflow counter\n")
-	sb.WriteString(fmt.Sprintf("baiPiao_hub_queue_overflow %d\n", m.QueueOverflow.Load()))
+	sb.WriteString("# HELP agnes_hub_queue_overflow Requests dropped because queue full\n")
+	sb.WriteString("# TYPE agnes_hub_queue_overflow counter\n")
+	sb.WriteString(fmt.Sprintf("agnes_hub_queue_overflow %d\n", m.QueueOverflow.Load()))
 
-	sb.WriteString("# HELP baiPiao_hub_spillovers Soft-affinity spillovers\n")
-	sb.WriteString("# TYPE baiPiao_hub_spillovers counter\n")
-	sb.WriteString(fmt.Sprintf("baiPiao_hub_spillovers %d\n", m.Spillovers.Load()))
+	sb.WriteString("# HELP agnes_hub_spillovers Soft-affinity spillovers\n")
+	sb.WriteString("# TYPE agnes_hub_spillovers counter\n")
+	sb.WriteString(fmt.Sprintf("agnes_hub_spillovers %d\n", m.Spillovers.Load()))
 
-	sb.WriteString("# HELP baiPiao_hub_breaker_opened Breakers opened (401/403/402)\n")
-	sb.WriteString("# TYPE baiPiao_hub_breaker_opened counter\n")
-	sb.WriteString(fmt.Sprintf("baiPiao_hub_breaker_opened %d\n", m.BreakerOpened.Load()))
+	sb.WriteString("# HELP agnes_hub_breaker_opened Breakers opened (401/403/402)\n")
+	sb.WriteString("# TYPE agnes_hub_breaker_opened counter\n")
+	sb.WriteString(fmt.Sprintf("agnes_hub_breaker_opened %d\n", m.BreakerOpened.Load()))
 
-	sb.WriteString("# HELP baiPiao_hub_breaker_revived Breakers revived after cooldown\n")
-	sb.WriteString("# TYPE baiPiao_hub_breaker_revived counter\n")
-	sb.WriteString(fmt.Sprintf("baiPiao_hub_breaker_revived %d\n", m.BreakerRevived.Load()))
+	sb.WriteString("# HELP agnes_hub_breaker_revived Breakers revived after cooldown\n")
+	sb.WriteString("# TYPE agnes_hub_breaker_revived counter\n")
+	sb.WriteString(fmt.Sprintf("agnes_hub_breaker_revived %d\n", m.BreakerRevived.Load()))
 
 	// P1-4 富健康度：panic 总数 / 最近 60s 429 速率 / 排队深度 / 熔断中账号数。
-	sb.WriteString("# HELP baiPiao_hub_panics_total Recovered panics (degraded, not crashed)\n")
-	sb.WriteString("# TYPE baiPiao_hub_panics_total counter\n")
-	sb.WriteString(fmt.Sprintf("baiPiao_hub_panics_total %d\n", m.PanicsTotal.Load()))
+	sb.WriteString("# HELP agnes_hub_panics_total Recovered panics (degraded, not crashed)\n")
+	sb.WriteString("# TYPE agnes_hub_panics_total counter\n")
+	sb.WriteString(fmt.Sprintf("agnes_hub_panics_total %d\n", m.PanicsTotal.Load()))
 
 	// 韧性层观测：截断续写 / 软失败换号重发 / 软失败放弃续救（预算耗尽转 502） / 流式恢复。
-	sb.WriteString("# HELP baiPiao_hub_continuations MAX_TOKENS 截断自动续写轮数\n")
-	sb.WriteString("# TYPE baiPiao_hub_continuations counter\n")
-	sb.WriteString(fmt.Sprintf("baiPiao_hub_continuations %d\n", m.Continuations.Load()))
-	sb.WriteString("# HELP baiPiao_hub_soft_fail_retries HTTP 200 但内容不可用的换号重发次数\n")
-	sb.WriteString("# TYPE baiPiao_hub_soft_fail_retries counter\n")
-	sb.WriteString(fmt.Sprintf("baiPiao_hub_soft_fail_retries %d\n", m.SoftFailRetries.Load()))
-	sb.WriteString("# HELP baiPiao_hub_soft_fail_gave_up 软失败预算耗尽、放弃续救并转 502 的次数\n")
-	sb.WriteString("# TYPE baiPiao_hub_soft_fail_gave_up counter\n")
-	sb.WriteString(fmt.Sprintf("baiPiao_hub_soft_fail_gave_up %d\n", m.SoftFailGaveUp.Load()))
-	sb.WriteString("# HELP baiPiao_hub_resumed_streams 流式 auto-resume 次数\n")
-	sb.WriteString("# TYPE baiPiao_hub_resumed_streams counter\n")
-	sb.WriteString(fmt.Sprintf("baiPiao_hub_resumed_streams %d\n", m.ResumedStreams.Load()))
+	sb.WriteString("# HELP agnes_hub_continuations MAX_TOKENS 截断自动续写轮数\n")
+	sb.WriteString("# TYPE agnes_hub_continuations counter\n")
+	sb.WriteString(fmt.Sprintf("agnes_hub_continuations %d\n", m.Continuations.Load()))
+	sb.WriteString("# HELP agnes_hub_soft_fail_retries HTTP 200 但内容不可用的换号重发次数\n")
+	sb.WriteString("# TYPE agnes_hub_soft_fail_retries counter\n")
+	sb.WriteString(fmt.Sprintf("agnes_hub_soft_fail_retries %d\n", m.SoftFailRetries.Load()))
+	sb.WriteString("# HELP agnes_hub_soft_fail_gave_up 软失败预算耗尽、放弃续救并转 502 的次数\n")
+	sb.WriteString("# TYPE agnes_hub_soft_fail_gave_up counter\n")
+	sb.WriteString(fmt.Sprintf("agnes_hub_soft_fail_gave_up %d\n", m.SoftFailGaveUp.Load()))
+	sb.WriteString("# HELP agnes_hub_resumed_streams 流式 auto-resume 次数\n")
+	sb.WriteString("# TYPE agnes_hub_resumed_streams counter\n")
+	sb.WriteString(fmt.Sprintf("agnes_hub_resumed_streams %d\n", m.ResumedStreams.Load()))
 
-	sb.WriteString("# HELP baiPiao_hub_upstream_429_rate_per_min Upstream 429s in the last 60s\n")
-	sb.WriteString("# TYPE baiPiao_hub_upstream_429_rate_per_min gauge\n")
-	sb.WriteString(fmt.Sprintf("baiPiao_hub_upstream_429_rate_per_min %d\n", h.Upstream429RatePerMin()))
+	sb.WriteString("# HELP agnes_hub_upstream_429_rate_per_min Upstream 429s in the last 60s\n")
+	sb.WriteString("# TYPE agnes_hub_upstream_429_rate_per_min gauge\n")
+	sb.WriteString(fmt.Sprintf("agnes_hub_upstream_429_rate_per_min %d\n", h.Upstream429RatePerMin()))
 
-	sb.WriteString("# HELP baiPiao_hub_queue_depth Requests currently queued across all pacers\n")
-	sb.WriteString("# TYPE baiPiao_hub_queue_depth gauge\n")
-	sb.WriteString(fmt.Sprintf("baiPiao_hub_queue_depth %d\n", h.QueueDepth()))
+	sb.WriteString("# HELP agnes_hub_queue_depth Requests currently queued across all pacers\n")
+	sb.WriteString("# TYPE agnes_hub_queue_depth gauge\n")
+	sb.WriteString(fmt.Sprintf("agnes_hub_queue_depth %d\n", h.QueueDepth()))
 
-	sb.WriteString("# HELP baiPiao_hub_breaker_open_count Accounts currently circuit-opened\n")
-	sb.WriteString("# TYPE baiPiao_hub_breaker_open_count gauge\n")
-	sb.WriteString(fmt.Sprintf("baiPiao_hub_breaker_open_count %d\n", h.BreakerOpenCount()))
+	sb.WriteString("# HELP agnes_hub_breaker_open_count Accounts currently circuit-opened\n")
+	sb.WriteString("# TYPE agnes_hub_breaker_open_count gauge\n")
+	sb.WriteString(fmt.Sprintf("agnes_hub_breaker_open_count %d\n", h.BreakerOpenCount()))
 
-	sb.WriteString("# HELP baiPiao_hub_wait_ms_total Total wait time in milliseconds\n")
-	sb.WriteString("# TYPE baiPiao_hub_wait_ms_total counter\n")
-	sb.WriteString(fmt.Sprintf("baiPiao_hub_wait_ms_total %d\n", m.WaitMS.Load()))
+	sb.WriteString("# HELP agnes_hub_wait_ms_total Total wait time in milliseconds\n")
+	sb.WriteString("# TYPE agnes_hub_wait_ms_total counter\n")
+	sb.WriteString(fmt.Sprintf("agnes_hub_wait_ms_total %d\n", m.WaitMS.Load()))
 
-	sb.WriteString("# HELP baiPiao_hub_uptime_seconds Seconds since startup\n")
-	sb.WriteString("# TYPE baiPiao_hub_uptime_seconds gauge\n")
-	sb.WriteString(fmt.Sprintf("baiPiao_hub_uptime_seconds %.0f\n", now.Sub(h.Metrics.StartedAt).Seconds()))
+	sb.WriteString("# HELP agnes_hub_uptime_seconds Seconds since startup\n")
+	sb.WriteString("# TYPE agnes_hub_uptime_seconds gauge\n")
+	sb.WriteString(fmt.Sprintf("agnes_hub_uptime_seconds %.0f\n", now.Sub(h.Metrics.StartedAt).Seconds()))
 
-	sb.WriteString("# HELP baiPiao_hub_started_at_seconds Unix timestamp when hub started\n")
-	sb.WriteString("# TYPE baiPiao_hub_started_at_seconds gauge\n")
-	sb.WriteString(fmt.Sprintf("baiPiao_hub_started_at_seconds %.0f\n", float64(startedAt)))
+	sb.WriteString("# HELP agnes_hub_started_at_seconds Unix timestamp when hub started\n")
+	sb.WriteString("# TYPE agnes_hub_started_at_seconds gauge\n")
+	sb.WriteString(fmt.Sprintf("agnes_hub_started_at_seconds %.0f\n", float64(startedAt)))
 
-	sb.WriteString("# HELP baiPiao_hub_total_text_rpm Current effective text RPM sum across all accounts\n")
-	sb.WriteString("# TYPE baiPiao_hub_total_text_rpm gauge\n")
-	sb.WriteString(fmt.Sprintf("baiPiao_hub_total_text_rpm %.2f\n", totalTextRPM))
+	sb.WriteString("# HELP agnes_hub_total_text_rpm Current effective text RPM sum across all accounts\n")
+	sb.WriteString("# TYPE agnes_hub_total_text_rpm gauge\n")
+	sb.WriteString(fmt.Sprintf("agnes_hub_total_text_rpm %.2f\n", totalTextRPM))
 
-	sb.WriteString("# HELP baiPiao_hub_account_penalty_remaining_sec Seconds until account unblocked\n")
-	sb.WriteString("# TYPE baiPiao_hub_account_penalty_remaining_sec gauge\n")
+	sb.WriteString("# HELP agnes_hub_account_penalty_remaining_sec Seconds until account unblocked\n")
+	sb.WriteString("# TYPE agnes_hub_account_penalty_remaining_sec gauge\n")
 	sb.WriteString("# LABELS account_id,account_name,enabled\n")
 	for _, g := range gauges {
 		enabledLabel := "0"
 		if g.enabled {
 			enabledLabel = "1"
 		}
-		sb.WriteString(fmt.Sprintf("baiPiao_hub_account_penalty_remaining_sec{account_id=\"%s\",account_name=\"%s\",enabled=\"%s\"} %.2f\n",
+		sb.WriteString(fmt.Sprintf("agnes_hub_account_penalty_remaining_sec{account_id=\"%s\",account_name=\"%s\",enabled=\"%s\"} %.2f\n",
 			g.id, g.name, enabledLabel, g.penaltyRemainingSec))
 	}
 
-	sb.WriteString("# HELP baiPiao_hub_account_consecutive_failures Consecutive error count per account\n")
-	sb.WriteString("# TYPE baiPiao_hub_account_consecutive_failures gauge\n")
+	sb.WriteString("# HELP agnes_hub_account_consecutive_failures Consecutive error count per account\n")
+	sb.WriteString("# TYPE agnes_hub_account_consecutive_failures gauge\n")
 	sb.WriteString("# LABELS account_id,account_name\n")
 	for _, g := range gauges {
-		sb.WriteString(fmt.Sprintf("baiPiao_hub_account_consecutive_failures{account_id=\"%s\",account_name=\"%s\"} %d\n",
+		sb.WriteString(fmt.Sprintf("agnes_hub_account_consecutive_failures{account_id=\"%s\",account_name=\"%s\"} %d\n",
 			g.id, g.name, g.consecutiveFailures))
 	}
 
-	sb.WriteString("# HELP baiPiao_hub_request_timeout_ms Configured request timeout\n")
-	sb.WriteString("# TYPE baiPiao_hub_request_timeout_ms gauge\n")
-	sb.WriteString(fmt.Sprintf("baiPiao_hub_request_timeout_ms %d\n", settings.RequestTimeoutMS))
+	sb.WriteString("# HELP agnes_hub_request_timeout_ms Configured request timeout\n")
+	sb.WriteString("# TYPE agnes_hub_request_timeout_ms gauge\n")
+	sb.WriteString(fmt.Sprintf("agnes_hub_request_timeout_ms %d\n", settings.RequestTimeoutMS))
 
 	w.Header().Set("Content-Type", "text/plain; version=0.0.4; charset=utf-8")
 	w.WriteHeader(http.StatusOK)
@@ -1359,7 +1359,7 @@ func (s *Server) proxy(w http.ResponseWriter, r *http.Request, item *config.Down
 			if out.err != nil {
 				s.logUsageError(item, decision, opts.PoolClass, opts.Path, true, nil, 0, 0, decision.Prompt.Text, 502, out.err.Error())
 				writeSSEFrame(w, flusher, map[string]any{
-					"error": map[string]any{"message": out.err.Error(), "type": "baipiao_hub_queue"}})
+					"error": map[string]any{"message": out.err.Error(), "type": "agnes_hub_queue"}})
 				return
 			}
 			result := out.result
@@ -1374,7 +1374,7 @@ func (s *Server) proxy(w http.ResponseWriter, r *http.Request, item *config.Down
 			s.logUsageError(item, decision, opts.PoolClass, opts.Path, true, result.Account, result.WaitMS, result.Attempts, decision.Prompt.Text, result.Status, string(raw))
 			return
 		}
-		writeSSEComment(w, flusher, fmt.Sprintf("baiPiao-hub account=%s wait_ms=%d attempts=%d model=%s",
+		writeSSEComment(w, flusher, fmt.Sprintf("agnes-hub-go account=%s wait_ms=%d attempts=%d model=%s",
 			safeHeader(result.Account.Name), result.WaitMS, result.Attempts, result.ModelUsed))
 		tail := &sseTail{w: &flushWriter{w: w, f: flusher}, cap: 1 << 16}
 		_, _ = io.Copy(tail, result.Stream)

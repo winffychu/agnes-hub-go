@@ -1,4 +1,4 @@
-## 白嫖 Hub (Agnes Hub) v{{VERSION}}
+## Agnes Hub v{{VERSION}}
 
 多账号聚合中转网关，支持 agnes / AMD / NVIDIA / M365 / OpenRouter 等渠道统一调度与 RPM 限流排队。
 
@@ -61,7 +61,7 @@
 
 ### 下载
 
-- `baipiao-hub-{{VERSION}}.fpk` — 飞牛 fnOS 安装包（应用中心安装，应用名「白嫖 Hub」，内部 appname 保持 `agnes-hub` 以保留已装应用数据）
+- `agnes-hub-go-{{VERSION}}.fpk` — 飞牛 fnOS 安装包（应用中心安装，应用名「Agnes Hub」，内部 appname 保持 `agnes-hub` 以保留已装应用数据）
 - `agnes-hub-go-windows-{{VERSION}}.zip` — Windows 绿色版（含 exe + 启动脚本 + README）
-- `baipiao-hub-linux-amd64` / `baipiao-hub-linux-arm64` — Linux 二进制（x86_64 / aarch64）
+- `agnes-hub-go-linux-amd64` / `agnes-hub-go-linux-arm64` — Linux 二进制（x86_64 / aarch64）
 - `agnes-hub-go.exe` — Windows 裸可执行文件

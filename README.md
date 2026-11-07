@@ -15,7 +15,7 @@ Agnes AI 的**多账号聚合中转 + RPM 限流排队网关**。
 
 ### 直接下载
 
-[Releases](https://github.com/my788525/agnes-hub-go/releases) 里按平台提供：
+[Releases](https://github.com/winffychu/agnes-hub-go/releases) 里按平台提供：
 
 | 资产 | 用途 |
 | --- | --- |
@@ -60,6 +60,9 @@ Go 编译 → 以前台方式启动服务。**关闭窗口即停止服务**，�
 agnes-hub-go/
 ├── main.go                     入口：标志解析、优雅关闭、启动横幅
 ├── agnes-hub-go.bat            Windows 一键启动（GBK + CRLF 编码，中文 cmd 必需）
+├── Dockerfile                  容器镜像（多阶段交叉编译 + alpine 非 root）
+├── docker-compose.yml          Docker Compose 一键部署
+├── .github/workflows/          CI（ci.yml）与发版（release.yml）
 ├── internal/
 │   ├── config/                 全部持久化状态（JSON 原子写、密码、密钥、任务映射）
 │   ├── pool/                   模型名 → 池分类（限流桶）、模态 ↔ 池 换算
@@ -75,8 +78,13 @@ agnes-hub-go/
 │   ├── check_bat.py            实测 bat 的编码与三个分支（不启动服务）
 │   ├── smoke_test.py           零配额端到端冒烟（不碰上游）
 │   ├── build_fpk.py            打包飞牛 fnOS 的 .fpk 安装包（不碰上游）
+│   ├── release.py              本地一键发版（紧急通道，见 docs/RELEASE.md）
+│   ├── windows-readme.txt      Windows 绿色版 zip 内 README.txt 的模板
 │   ├── deploy_nas.py           SSH 上传 + 安装 + 前台联调（口令走环境变量）
 │   └── multi_account_probe.py  多账号吞吐探针（本地 mock 上游，零配额）
+├── docs/
+│   ├── DOCKER.md               容器部署手册
+│   └── RELEASE.md              发版手册
 ├── assets/
 │   ├── ICON.PNG                飞牛应用中心列表图标（64×64）
 │   └── ICON_256.PNG            飞牛应用详情页图标（256×256）
@@ -485,12 +493,79 @@ python tools/deploy_nas.py --host <nas-host> --user <user>
 
 ---
 
-## 12. 已知边界与后续
+## 12. Docker 部署
+
+不想装 Go、也不想碰 bat，可以直接用官方镜像（详见 [docs/DOCKER.md](docs/DOCKER.md)）：
+
+```yaml
+# docker-compose.yml
+services:
+  agnes-hub:
+    image: ghcr.io/winffychu/agnes-hub-go:latest
+    restart: unless-stopped
+    ports:
+      - "4142:4142"
+    volumes:
+      - ./data:/data          # 全部运行期数据，升级/回滚不丢
+    environment:
+      AGNES_HUB_UPDATE_REPO: "off"   # 容器内自更新无意义，显式关闭
+      TZ: "Asia/Shanghai"
+```
+
+```bash
+mkdir -p data && sudo chown -R 10001:10001 data   # 容器内 UID=10001，属主不对写不进去
+docker compose up -d
+docker compose logs -f
+```
+
+首次登录用默认管理员密码 `admin123`，登录页会提示「首次登录请改密」，进去后立即改掉。
+
+要点：
+
+- **升级 = 换镜像 tag**：`docker compose pull && docker compose up -d`，
+  `./data` 原样保留；容器内自更新已关闭（替换的只是可写层，重启即回滚）。
+- 非 root（UID 10001）运行、只读根文件系统 + `/data` 单独可写、
+  自带 `/healthz` 健康检查。
+- 镜像由 CI 在打 tag 时自动构建并推送（linux/amd64 + linux/arm64）。
+
+---
+
+## 13. CI 与发版
+
+发版流程详见 [docs/RELEASE.md](docs/RELEASE.md)，这里只说结论：
+
+- **唯一发版入口是打 tag**：`git tag -a v1.0.40 && git push origin v1.0.40`
+  触发 `.github/workflows/release.yml`，自动完成三平台构建、打包、
+  创建 Release 并推送容器镜像。
+- **版本闸门**：tag（去 `v` 前缀）必须与 `main.go` 的 `var version` 完全一致，
+  否则直接 fail，什么都不发 —— 防止「改了代码没 bump 版本就发 tag」把旧版
+  当新版推给用户。
+- 日常 CI（`.github/workflows/ci.yml`）在 push / PR 时跑 `go vet`、
+  全量 `go test`、master 上的 `-race`，以及三平台交叉编译冒烟。
+
+### Release 资产清单
+
+| 资产 | 用途 |
+| --- | --- |
+| `agnes-hub-go-<版本>.fpk` | 飞牛 fnOS 应用中心安装包 |
+| `agnes-hub-go-windows-<版本>.zip` | Windows 绿色版（exe + bat + README.txt） |
+| `agnes-hub-go-linux-amd64` | Linux x64 二进制 |
+| `agnes-hub-go-linux-arm64` | Linux ARM64 二进制 |
+| `agnes-hub-go.exe` | Windows 裸二进制（自更新下载它） |
+| `ghcr.io/winffychu/agnes-hub-go:<版本>` / `:latest` | 容器镜像（amd64 + arm64） |
+
+本地紧急发版通道：`python tools/release.py --no-push`（只产本地产物），
+完整用法与回滚见 [docs/RELEASE.md](docs/RELEASE.md)。
+
+---
+
+## 14. 已知边界与后续
 
 - **官方限流表的准确性**：表里的数字来自官方文档，真实边界需逐账号实测
   （已有 `rpm_overrides` 作为兜底）。
 - **`VideoWaitSec`（同步等视频出结果）**：默认 0 = 提交后立即返回。开启后会在
   网关内阻塞等待，需实测上游的实际出片时延再定值。
 - **多账号提速有前提**：见第 10 节，串行单任务拿不到收益。
-- **未做自启 / 服务化**：Windows 端按约定只提供 bat 按需启动，关闭窗口即停止；
-  飞牛端交给应用中心托管。
+- **服务化交给外部托管**：Windows 端按约定只提供 bat 按需启动，关闭窗口即停止；
+  飞牛端交给应用中心托管；其余 Linux 主机可用 Docker（见第 12 节），
+  不要指望程序自己做守护与开机自启。

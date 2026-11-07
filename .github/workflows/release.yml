@@ -1,0 +1,201 @@
+# agnes-hub-go — 发版
+#
+# 触发：push 形如 v1.2.3 的 tag。
+#
+# 两个 job：
+#   release — 校验 tag 与 main.go 版本一致（防「发旧版」事故的闸门）→ 三平台构建
+#             → 打包 5 个资产 → gh release create 上传
+#   docker  — needs: release（闸门过了才推镜像）→ buildx 多架构构建并推 ghcr.io
+#
+# 约定：tag 一律带 `v` 前缀（v1.2.3），main.go 里是无前缀的 1.2.3；
+#       比较前统一剥掉 `v`，资产名与镜像 tag 都用无前缀版本号。
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+# 默认最小权限，job 内按需提权
+permissions:
+  contents: read
+
+# 同一 tag 上的并发不取消：中断到一半会留下「Release 建了但资产不全」的半成品，
+# 比排队慢更糟。串行执行，后到的等前一个跑完。
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  GOTOOLCHAIN: local
+
+jobs:
+  # ==========================================================================
+  # 1. 构建资产并创建 GitHub Release
+  # ==========================================================================
+  release:
+    name: release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write   # 创建 Release + 上传资产
+    outputs:
+      version: ${{ steps.gate.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+
+      # ---- 版本闸门：tag 必须与 main.go 的 var version 完全一致 ----
+      # 防的是「改了代码没 bump 版本就发 tag」这类事故：二进制里嵌入的版本来自
+      # main.go，若两者不一致，用户的自更新会把「旧版本」当成新版推下去
+      #（历史上 1.0.3 的 exe 误发即此类）。
+      - name: Verify tag matches main.go version
+        id: gate
+        run: |
+          set -euo pipefail
+          tag="${GITHUB_REF_NAME}"
+          tag_ver="${tag#v}"
+          # grep 找不到时不能让它把整个 step 打断，先 || true 再自行报错
+          main_ver="$(grep -oE 'var[[:space:]]+version[[:space:]]*=[[:space:]]*"[0-9]+\.[0-9]+\.[0-9]+"' main.go 2>/dev/null \
+                      | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -n1 || true)"
+          if [ -z "${main_ver}" ]; then
+            echo "::error title=版本解析失败::无法从 main.go 解析 \`var version = \"x.y.z\"\`"
+            exit 1
+          fi
+          if [ "${tag_ver}" != "${main_ver}" ]; then
+            echo "::error title=版本不一致::tag ${tag} 与 main.go 的 version=${main_ver} 不一致，拒绝发版（请先 bump main.go 再重新打 tag）"
+            exit 1
+          fi
+          echo "版本校验通过：tag=${tag} == main.go=${main_ver}"
+          echo "version=${main_ver}" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+          # 零第三方依赖、无 go.sum，setup-go 的缓存键无从计算，必须关掉
+          cache: false
+
+      # ---- 三平台构建：参数与 ci.yml / tools/release.py 保持一致 ----
+      # 产物名与 build_fpk.py 的输入约定一致（它在仓库根目录找这两个 ELF）。
+      - name: Build binaries
+        env:
+          VERSION: ${{ steps.gate.outputs.version }}
+        run: |
+          set -euxo pipefail
+          CGO_ENABLED=0 GOOS=linux   GOARCH=amd64 go build -trimpath -buildvcs=false -ldflags "-s -w" -o agnes-hub-go-linux-amd64 .
+          CGO_ENABLED=0 GOOS=linux   GOARCH=arm64 go build -trimpath -buildvcs=false -ldflags "-s -w" -o agnes-hub-go-linux-arm64 .
+          CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -trimpath -buildvcs=false -ldflags "-s -w" -o agnes-hub-go.exe .
+          ls -l agnes-hub-go-linux-amd64 agnes-hub-go-linux-arm64 agnes-hub-go.exe
+
+      # ---- 架构自检 ----
+      # GOARCH 写错时 go build 不报错，错版二进制要等用户下载运行才暴露。
+      # 在发布前用 file 读 ELF/PE 头把这道关补上。
+      - name: Verify artifact architectures
+        run: |
+          set -euo pipefail
+          file agnes-hub-go-linux-amd64 agnes-hub-go-linux-arm64 agnes-hub-go.exe
+          file agnes-hub-go-linux-amd64 | grep -q 'x86-64'
+          file agnes-hub-go-linux-arm64 | grep -q 'aarch64'
+          file agnes-hub-go.exe        | grep -q 'PE32+'
+          echo "架构校验通过：amd64 / arm64 / windows-amd64"
+
+      # ---- Windows 绿色版 zip：exe + bat + README.txt ----
+      # README.txt 由 tools/windows-readme.txt（UTF-8 模板）生成，与 tools/release.py 同源，
+      # 两条链路打出来的 zip 内容一致。
+      - name: Package Windows zip
+        env:
+          VERSION: ${{ steps.gate.outputs.version }}
+        run: |
+          set -euxo pipefail
+          mkdir -p winpkg dist
+          cp agnes-hub-go.exe winpkg/agnes-hub-go.exe
+          cp agnes-hub-go.bat winpkg/agnes-hub-go.bat
+          cp tools/windows-readme.txt winpkg/README.txt
+          ( cd winpkg && zip -9 "${GITHUB_WORKSPACE}/dist/agnes-hub-go-windows-${VERSION}.zip" \
+              agnes-hub-go.exe agnes-hub-go.bat README.txt )
+          unzip -l "dist/agnes-hub-go-windows-${VERSION}.zip"
+
+      # ---- 飞牛 fnOS fpk ----
+      # build_fpk.py 在仓库根目录读 agnes-hub-go-linux-amd64 / -arm64（上一步已产出），
+      # 输出 dist/agnes-hub-go-{version}.fpk。版本号同样取自 main.go，与 tag 一致。
+      # 注意用 python3：ubuntu runner 不保证有 `python` 这个别名。
+      - name: Build fpk
+        env:
+          VERSION: ${{ steps.gate.outputs.version }}
+        run: |
+          set -euxo pipefail
+          python3 tools/build_fpk.py
+          ls -l "dist/agnes-hub-go-${VERSION}.fpk"
+
+      # ---- 创建 Release 并上传 5 个资产 ----
+      # gh 已预装于 ubuntu-latest；GITHUB_TOKEN 经 GH_TOKEN 传入。
+      # --verify-tag：tag 必须已存在，避免 gh 顺手在默认分支上新建一个同名 tag。
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ steps.gate.outputs.version }}
+        run: |
+          set -euxo pipefail
+          if [ -f tools/release_notes.md ]; then
+            sed "s/{{VERSION}}/${VERSION}/g" tools/release_notes.md > "${RUNNER_TEMP}/notes.md"
+          else
+            printf '## Agnes Hub v%s\n\n多账号聚合中转网关。\n' "${VERSION}" > "${RUNNER_TEMP}/notes.md"
+          fi
+          assets=(
+            "dist/agnes-hub-go-${VERSION}.fpk"
+            "agnes-hub-go-linux-amd64"
+            "agnes-hub-go-linux-arm64"
+            "dist/agnes-hub-go-windows-${VERSION}.zip"
+            "agnes-hub-go.exe"
+          )
+          gh release create "v${VERSION}" "${assets[@]}" \
+            --verify-tag \
+            --title "v${VERSION}" \
+            --notes-file "${RUNNER_TEMP}/notes.md"
+
+  # ==========================================================================
+  # 2. 构建多架构容器镜像并推送 ghcr.io
+  # ==========================================================================
+  docker:
+    name: docker
+    # 闸门过了（release 成功）才推镜像，避免版本不一致的 tag 污染 registry
+    needs: release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write   # 推送 ghcr.io
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Resolve version
+        id: ver
+        run: |
+          set -euo pipefail
+          echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push (linux/amd64, linux/arm64)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          # 不可变版本 tag + latest。owner 取仓库属主（winffychu），ghcr 路径须全小写。
+          tags: |
+            ghcr.io/${{ github.repository_owner }}/agnes-hub-go:${{ steps.ver.outputs.version }}
+            ghcr.io/${{ github.repository_owner }}/agnes-hub-go:latest
+          labels: |
+            org.opencontainers.image.title=agnes-hub-go
+            org.opencontainers.image.version=${{ steps.ver.outputs.version }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+          # 层缓存走 GitHub Actions 缓存，二次构建显著加速
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

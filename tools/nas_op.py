@@ -3,12 +3,12 @@
 """agnes-hub 飞牛 NAS 运维脚本（热更 / RawCapture 开关 / 抓取 / 健康检查）。
 
 固化流程（见项目记忆）：
-  - 停服：普通 SSH 会话跑 appcenter-cli stop（panic 无害）+ pkill -9 -f baipiao-hub 兜底。
+  - 停服：普通 SSH 会话跑 appcenter-cli stop（panic 无害）+ pkill -9 -f agnes-hub-go 兜底。
   - 替换：SFTP 上传到 /tmp，普通会话 cp -f 覆盖（admin==root 可直接覆盖 agnes-hub 属主文件，
     无需 sudo）+ chown + chmod 755。
   - 启动：必须用 PTY 方式 sudo 调 appcenter-cli start（非 PTY 的 echo PW|sudo -S 在 fnOS 上
     不返回退出状态会挂死 120s）。
-  - 数据目录：/vol1/@appdata/agnes-hub/data ；二进制：/vol1/@appcenter/agnes-hub/app/baipiao-hub
+  - 数据目录：/vol1/@appdata/agnes-hub/data ；二进制：/vol1/@appcenter/agnes-hub/app/agnes-hub-go
     （脚本自动 find 定位，不写死）。
 
 依赖：paramiko（managed venv 已装）。运行：
@@ -31,7 +31,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 APP_ID = "agnes-hub"
 PORT = 4142
 DATA_DIR = "/vol1/@appdata/%s/data" % APP_ID
-DEFAULT_BIN = os.path.join(ROOT, ".gotmp", "baipiao-hub-linux-amd64")
+DEFAULT_BIN = os.path.join(ROOT, ".gotmp", "agnes-hub-go-linux-amd64")
 FALLBACK_PASS = os.path.join(ROOT, ".nas_pass")
 HOST = "192.168.100.3"
 
@@ -132,15 +132,15 @@ class Nas:
 
 
 def locate_exe(nas):
-    out = nas.run("find /vol1/@appcenter/%s -maxdepth 4 -name baipiao-hub -type f 2>/dev/null; "
-                  "ls -l /vol1/@appcenter/%s/app/baipiao-hub 2>/dev/null" % (APP_ID, APP_ID))
+    out = nas.run("find /vol1/@appcenter/%s -maxdepth 4 -name agnes-hub-go -type f 2>/dev/null; "
+                  "ls -l /vol1/@appcenter/%s/app/agnes-hub-go 2>/dev/null" % (APP_ID, APP_ID))
     for line in out.splitlines():
         line = line.strip()
-        if line.startswith("/") and "baipiao-hub" in line and "No such" not in line:
+        if line.startswith("/") and "agnes-hub-go" in line and "No such" not in line:
             # 取 find 输出的纯路径行（不以权限串开头）
-            if line.endswith("baipiao-hub"):
+            if line.endswith("agnes-hub-go"):
                 return line
-    return "/vol1/@appcenter/%s/app/baipiao-hub" % APP_ID
+    return "/vol1/@appcenter/%s/app/agnes-hub-go" % APP_ID
 
 
 def deploy(nas, local_bin):
@@ -149,16 +149,16 @@ def deploy(nas, local_bin):
     print("[1] 定位现有二进制 + 当前进程")
     exe = locate_exe(nas)
     print("    EXE =", exe)
-    print("    PROC:", nas.run("pgrep -af baipiao-hub || echo NONE").strip())
+    print("    PROC:", nas.run("pgrep -af agnes-hub-go || echo NONE").strip())
     print("[2] 停服（appcenter-cli stop panic 无害；PTY sudo 精确杀残留进程，"
           "普通 pkill 无权限，pkill -f 又会自杀式匹配自身）")
     nas.run("appcenter-cli stop %s 2>&1" % APP_ID)
-    print(nas.sudo_pty("pkill -9 -x baipiao-hub; true", timeout=30).strip())
+    print(nas.sudo_pty("pkill -9 -x agnes-hub-go; true", timeout=30).strip())
     time.sleep(2)
-    print("    PROC:", nas.run("pgrep -af baipiao-hub || echo NO_PROC").strip())
+    print("    PROC:", nas.run("pgrep -af agnes-hub-go || echo NO_PROC").strip())
     print("[3] 上传并覆盖二进制")
-    nas.put(local_bin, "/tmp/baipiao-hub")
-    print(nas.run("cp -f /tmp/baipiao-hub %s && chown %s:%s %s && chmod 755 %s && "
+    nas.put(local_bin, "/tmp/agnes-hub-go")
+    print(nas.run("cp -f /tmp/agnes-hub-go %s && chown %s:%s %s && chmod 755 %s && "
                   "ls -l %s && echo TRUNC=$(grep -ac 'raw_capture' %s)"
                   % (exe, APP_ID, APP_ID, exe, exe, exe, exe)).strip())
     print("[4] PTY sudo 启动（先 stop 清状态，避免 appcenter 误判 already started）")
@@ -178,7 +178,7 @@ def deploy(nas, local_bin):
 def set_capture(nas, enabled):
     print("[1] 停服")
     nas.run("appcenter-cli stop %s 2>&1" % APP_ID)
-    print(nas.sudo_pty("pkill -9 -x baipiao-hub; true", timeout=30).strip())
+    print(nas.sudo_pty("pkill -9 -x agnes-hub-go; true", timeout=30).strip())
     time.sleep(2)
     sp = DATA_DIR + "/settings.json"  # 远端 Linux 路径，必须用正斜杠拼接（Windows 上 os.path.join 会出反斜杠）
     local_tmp = os.path.join(ROOT, ".gotmp", "settings.json")
@@ -207,7 +207,7 @@ def set_capture(nas, enabled):
     out = nas.sudo_pty("appcenter-cli start %s" % APP_ID, timeout=60)
     print(out.strip())
     if "already started" in out:
-        exe = "/vol1/@appcenter/%s/app/baipiao-hub" % APP_ID
+        exe = "/vol1/@appcenter/%s/app/agnes-hub-go" % APP_ID
         print("[2b] 兜底：nohup 直启")
         print(nas.sudo_pty("nohup %s -host 0.0.0.0 -port %d -data %s >> %s/app.log 2>&1 &"
                            % (exe, PORT, DATA_DIR, DATA_DIR), timeout=30).strip())
@@ -238,7 +238,7 @@ def fetch(nas):
 
 def health(nas):
     print(nas.run("curl -s http://127.0.0.1:%d/healthz" % PORT).strip())
-    print("PROC:", nas.run("pgrep -af baipiao-hub || echo NONE").strip())
+    print("PROC:", nas.run("pgrep -af agnes-hub-go || echo NONE").strip())
 
 
 def set_opt(nas, key, value):
@@ -247,7 +247,7 @@ def set_opt(nas, key, value):
     enabled = value.lower() in ("on", "1", "true", "yes")
     print("[1] 停服")
     nas.run("appcenter-cli stop %s 2>&1" % APP_ID)
-    print(nas.sudo_pty("pkill -9 -x baipiao-hub; true", timeout=30).strip())
+    print(nas.sudo_pty("pkill -9 -x agnes-hub-go; true", timeout=30).strip())
     time.sleep(2)
     sp = DATA_DIR + "/settings.json"
     local_tmp = os.path.join(ROOT, ".gotmp", "settings.json")
@@ -273,7 +273,7 @@ def set_opt(nas, key, value):
     out = nas.sudo_pty("appcenter-cli start %s" % APP_ID, timeout=60)
     print(out.strip())
     if "already started" in out:
-        exe = "/vol1/@appcenter/%s/app/baipiao-hub" % APP_ID
+        exe = "/vol1/@appcenter/%s/app/agnes-hub-go" % APP_ID
         print("[2b] 兜底：nohup 直启")
         print(nas.sudo_pty("nohup %s -host 0.0.0.0 -port %d -data %s >> %s/app.log 2>&1 &"
                            % (exe, PORT, DATA_DIR, DATA_DIR), timeout=30).strip())

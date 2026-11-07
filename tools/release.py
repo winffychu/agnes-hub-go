@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""agences-hub-go 一键发版脚本。
+"""agnes-hub-go 一键发版脚本。
 
 用法：
     python tools/release.py            # 完整发版（编译 + 打包 + tag + GitHub Release）
@@ -17,9 +17,11 @@
     用 PAT + 代理建 Release、传资源。
 
 前置条件：
-    1. Go 工具链（goroot/gopath/goproxy 见 MEMORY）
-    2. dist/README.txt 与 agnes-hub-go.bat 存在
-    3. 代理 127.0.0.1:3067 在监听
+    1. Go 工具链：脚本用 shutil.which("go") 查找，可用 GO_BIN 环境变量
+       指定绝对路径兜底（不再硬编码本机路径）
+    2. agnes-hub-go.bat 存在；dist/README.txt 若缺失会从
+       tools/windows-readme.txt 自动生成
+    3. 代理 127.0.0.1:3067 在监听（仅完整发版需要）
     4. GITHUB_PAT 环境变量或默认 PAT 可用
 """
 import os
@@ -31,13 +33,45 @@ import shutil
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DIST = os.path.join(ROOT, "dist")
-GO = os.path.expandvars(r"C:\Users\pguoy\go\bin\go.exe")
-GOROOT = os.path.expandvars(r"C:\Users\pguoy\go")
-GOPATH = os.path.expandvars(r"C:\Users\pguoy\gopath")
-GOPROXY = "https://goproxy.cn,direct"
+
+
+def _find_go() -> str:
+    """定位 go 可执行文件：GO_BIN 环境变量 > PATH > GOROOT/bin > 常见安装位。
+
+    不再硬编码本机用户目录（C:\\Users\\<name>\\...），换机器 / 换用户也能跑。
+    """
+    override = os.environ.get("GO_BIN", "").strip()
+    if override:
+        if os.path.exists(override):
+            return override
+        sys.exit(f"[FATAL] GO_BIN 指定的路径不存在: {override}")
+    found = shutil.which("go")
+    if found:
+        return found
+    goroot_env = os.environ.get("GOROOT", "").strip()
+    if goroot_env:
+        cand = os.path.join(goroot_env, "bin", "go.exe" if os.name == "nt" else "go")
+        if os.path.exists(cand):
+            return cand
+    for cand in (r"C:\Program Files\Go\bin\go.exe", r"C:\Go\bin\go.exe"):
+        if os.path.exists(cand):
+            return cand
+    sys.exit("[FATAL] 未找到 go 可执行文件：请把 go 加入 PATH，"
+             "或设置 GO_BIN 指向 go 可执行文件的绝对路径")
+
+
+GO = _find_go()
+# GOROOT / GOPATH / GOPROXY 均可被环境变量覆盖；留空则交给 go 自行探测
+# （现代 Go 会自动推导 GOROOT，显式传错值反而会破坏构建）。
+GOROOT = os.environ.get("GOROOT", "").strip()
+GOPATH = os.environ.get("GOPATH", "").strip()
+GOPROXY = os.environ.get("GOPROXY", "https://goproxy.cn,direct")
 GITHUB_PAT = os.environ.get("GITHUB_PAT", "")  # 必须经环境变量传入，绝不入 git
 PROXY = "http://127.0.0.1:3067"
-REPO = "my788525/agnes-hub-go"
+# 发布目标仓库：本仓库 fork 的 Release 产出在 winffychu（与 CI release.yml、
+# README 的下载链接同一目标）。可用 AGNES_HUB_RELEASE_REPO 环境变量覆盖；
+# 注意 main.go 里的自更新默认仓库保持上游，那是另一回事，不要在这里同步。
+REPO = os.environ.get("AGNES_HUB_RELEASE_REPO", "winffychu/agnes-hub-go").strip()
 
 
 def version_from_main_go() -> str:
@@ -52,18 +86,28 @@ def version_from_main_go() -> str:
 
 
 def go_build(env, goos, goarch, out):
-    """交叉编译单个目标。"""
-    args = [GO, "build", "-ldflags", "-s -w", "-o", out, "."]
+    """交叉编译单个目标。
+
+    -trimpath -buildvcs=false 与 CI（release.yml）/ Dockerfile / README 的
+    构建参数保持一致，保证两条链路产出的二进制可互换。
+    """
+    args = [GO, "build", "-trimpath", "-buildvcs=false",
+            "-ldflags", "-s -w", "-o", out, "."]
     cmd_env = {**os.environ, **env, "GOOS": goos, "GOARCH": goarch}
     print(f"  building {goos}/{goarch} -> {os.path.basename(out)}")
     subprocess.run(args, cwd=ROOT, env=cmd_env, check=True)
 
 
 def embedded_version(binary_path: str) -> set:
-    """提取二进制里嵌入的版本字符串（用于前置校验）。"""
+    """提取二进制里嵌入的版本字符串（用于前置校验）。
+
+    之前的正则写死 `1\\.0\\.\\d+`，版本一旦离开 1.0.x（如 1.1.0 / 2.0.0）
+    会在 check_version 处误报「嵌入版本不含 x.y.z」直接终止发版。
+    改为通配三段式语义化版本号。
+    """
     with open(binary_path, "rb") as f:
         data = f.read()
-    return set(m.decode() for m in re.findall(rb"1\.0\.\d+", data))
+    return set(m.decode() for m in re.findall(rb"\d+\.\d+\.\d+", data))
 
 
 def check_version(binary_path: str, expected: str):
@@ -85,16 +129,33 @@ def build_zip(exe, bat, readme, out):
     print(f"  zip  {out} ({os.path.getsize(out)} bytes)")
 
 
+def ensure_readme() -> str:
+    """返回 Windows zip 里 README.txt 的路径。
+
+    dist/README.txt 不存在时，从 tools/windows-readme.txt（UTF-8 模板，
+    与 CI release.yml 同源）拷贝生成，不再要求手工准备。
+    """
+    readme = os.path.join(DIST, "README.txt")
+    if os.path.exists(readme):
+        return readme
+    template = os.path.join(ROOT, "tools", "windows-readme.txt")
+    if not os.path.exists(template):
+        sys.exit("[FATAL] dist/README.txt 不存在，且模板 tools/windows-readme.txt 缺失")
+    shutil.copyfile(template, readme)
+    print(f"  [readme] 由 tools/windows-readme.txt 生成 {readme}")
+    return readme
+
+
 def build_fpk(version: str) -> str:
     """调用 build_fpk.py 生成 fpk。
 
     build_fpk.py 的版本号已改为从 main.go 单一来源读取（_version_from_main_go），
-    无需再临时 sed 替换 VERSION/VERSION_TAG。产出文件名现为 baipiao-hub-{version}.fpk。
+    无需再临时 sed 替换 VERSION/VERSION_TAG。产出文件名现为 agnes-hub-go-{version}.fpk。
     返回 fpk 的完整路径，供上层组装 Release 资源列表。
     """
     bf = os.path.join(ROOT, "tools", "build_fpk.py")
     subprocess.run([sys.executable, bf], cwd=ROOT, check=True)
-    fpk = os.path.join(DIST, f"baipiao-hub-{version}.fpk")
+    fpk = os.path.join(DIST, f"agnes-hub-go-{version}.fpk")
     if not os.path.exists(fpk):
         sys.exit(f"[FATAL] 未生成 {fpk}")
     print(f"  fpk  {fpk} ({os.path.getsize(fpk)} bytes)")
@@ -132,12 +193,12 @@ def release_notes(version: str) -> str:
             return md.replace("{{VERSION}}", version)
     print("  [notes] 未找到 tools/release_notes.md，回退内置文案")
     return (
-        f"## 白嫖 Hub (Agnes Hub) v{version}\n\n"
+        f"## Agnes Hub v{version}\n\n"
         "多账号聚合中转网关，支持 agnes / AMD / NVIDIA / M365 / OpenRouter 等渠道统一调度与 RPM 限流排队。\n\n"
         "### 下载\n"
-        f"- `baipiao-hub-{version}.fpk` — 飞牛 fnOS 安装包\n"
+        f"- `agnes-hub-go-{version}.fpk` — 飞牛 fnOS 安装包\n"
         f"- `agnes-hub-go-windows-{version}.zip` — Windows 绿色版\n"
-        f"- `baipiao-hub-linux-amd64` / `baipiao-hub-linux-arm64` — Linux 二进制\n"
+        f"- `agnes-hub-go-linux-amd64` / `agnes-hub-go-linux-arm64` — Linux 二进制\n"
         f"- `agnes-hub-go.exe` — Windows 裸可执行文件\n"
     )
 
@@ -195,13 +256,17 @@ def main():
     print(f"[release] 版本 {version}（来自 main.go）")
     os.makedirs(DIST, exist_ok=True)
 
-    go_env = {"GOROOT": GOROOT, "GOPATH": GOPATH, "GOPROXY": GOPROXY, "GOFLAGS": "-mod=mod"}
+    go_env = {"GOFLAGS": "-mod=mod", "GOPROXY": GOPROXY}
+    if GOROOT:
+        go_env["GOROOT"] = GOROOT
+    if GOPATH:
+        go_env["GOPATH"] = GOPATH
 
     # 1. 交叉编译
-    #    注意：build_fpk.py 的 prepare() 要求 ROOT 下存在 baipiao-hub-linux-amd64 /
-    #    baipiao-hub-linux-arm64（与 fnOS 内部二进制同名），故此处产出名必须与之一致。
-    linux_amd64 = os.path.join(ROOT, "baipiao-hub-linux-amd64")
-    linux_arm64 = os.path.join(ROOT, "baipiao-hub-linux-arm64")
+    #    注意：build_fpk.py 的 prepare() 要求 ROOT 下存在 agnes-hub-go-linux-amd64 /
+    #    agnes-hub-go-linux-arm64（与 fnOS 内部二进制同名），故此处产出名必须与之一致。
+    linux_amd64 = os.path.join(ROOT, "agnes-hub-go-linux-amd64")
+    linux_arm64 = os.path.join(ROOT, "agnes-hub-go-linux-arm64")
     win_exe = os.path.join(ROOT, "agnes-hub-go.exe")
     go_build(go_env, "linux", "amd64", linux_amd64)
     go_build(go_env, "linux", "arm64", linux_arm64)
@@ -214,7 +279,7 @@ def main():
 
     # 3. Windows 包
     bat = os.path.join(ROOT, "agnes-hub-go.bat")
-    readme = os.path.join(DIST, "README.txt")
+    readme = ensure_readme()
     win_zip = os.path.join(DIST, f"agnes-hub-go-windows-{version}.zip")
     build_zip(win_exe, bat, readme, win_zip)
 
@@ -228,9 +293,9 @@ def main():
     # 5. tag + GitHub Release
     git_push_tag(version)
     assets = [
-        (fpk, f"baipiao-hub-{version}.fpk", "application/octet-stream"),
-        (linux_amd64, "baipiao-hub-linux-amd64", "application/octet-stream"),
-        (linux_arm64, "baipiao-hub-linux-arm64", "application/octet-stream"),
+        (fpk, f"agnes-hub-go-{version}.fpk", "application/octet-stream"),
+        (linux_amd64, "agnes-hub-go-linux-amd64", "application/octet-stream"),
+        (linux_arm64, "agnes-hub-go-linux-arm64", "application/octet-stream"),
         (win_zip, f"agnes-hub-go-windows-{version}.zip", "application/zip"),
         (win_exe, "agnes-hub-go.exe", "application/octet-stream"),
     ]

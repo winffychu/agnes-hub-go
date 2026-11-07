@@ -819,9 +819,6 @@ func (h *Hub) SessionKey(headers map[string]string, downstreamKey string) string
 	}
 	session := strings.TrimSpace(headers["x-agnes-session"])
 	if session == "" {
-		session = strings.TrimSpace(headers["x-baipiao-session"]) // 旧品牌头，兼容老客户端
-	}
-	if session == "" {
 		session = strings.TrimSpace(headers["x-session-id"])
 	}
 	if session == "" {

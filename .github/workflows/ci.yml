@@ -1,0 +1,111 @@
+# agnes-hub-go — 持续集成
+#
+# 触发：push 到 master / 任意 PR / 手动 workflow_dispatch。
+# 目标：在 Linux runner 上以官方 Go 1.22 工具链做静态检查、全量测试、
+#       竞态检测（master 专属）与三平台交叉编译冒烟，保证「能编译、能过测」。
+#
+# 设计说明：
+#   - GOTOOLCHAIN=local 与 go.mod 的 `go 1.22` 对齐，避免 runner 联网去下载
+#     更新的工具链（受限环境下会直接失败，也不符合「声明 1.22 就用 1.22」的意图）。
+#   - setup-go 一律 cache: false。本仓库零第三方依赖、没有 go.sum，而
+#     actions/setup-go 的默认缓存键来自 go.sum 的哈希；go.sum 不存在时会报
+#     "Some specified paths were not resolved, unable to cache dependencies" 直接失败。
+#     没有依赖就没有缓存收益，关掉最稳。
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+  workflow_dispatch:
+
+# 最小权限：CI 只读仓库内容
+permissions:
+  contents: read
+
+# 同一 ref 上的新构建取消上一次，避免 PR 反复 push 时排队堆积
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  GOTOOLCHAIN: local
+
+jobs:
+  # ---------- go vet ----------
+  vet:
+    name: vet
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+          cache: false
+      - name: go vet
+        run: go vet ./...
+
+  # ---------- 全量测试 ----------
+  test:
+    name: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+          cache: false
+      # relay / web 两个包内含真实 HTTP 链路测试（mock 上游），各需 ~70s，属正常；
+      # 不额外设 -timeout，沿用 go test 默认（10m）。
+      - name: go test
+        run: go test ./... -count=1
+
+  # ---------- 竞态检测（仅 master push） ----------
+  race:
+    name: race
+    # PR 上跳过：race 版全量测试耗时是数倍，而并发正确性只需在合入后把一道关。
+    # 本工作流的 push 触发已限定 master 分支，这里再显式判一次 ref，避免日后
+    # 有人放开 push 分支范围时 race 悄悄跑到 PR 上。
+    if: github.event_name == 'push' && github.ref == 'refs/heads/master'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+          cache: false
+      - name: go test -race
+        run: go test -race ./... -count=1
+
+  # ---------- 交叉编译冒烟（不产出 Release） ----------
+  build:
+    name: build ${{ matrix.goos }}/${{ matrix.goarch }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - goos: linux
+            goarch: amd64
+          - goos: linux
+            goarch: arm64
+          - goos: windows
+            goarch: amd64
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+          cache: false
+      # 仅验证「可编译」，产物写入 runner 临时目录、不上传。
+      # 参数与 release.yml / tools/release.py 完全一致，避免两条链路产出的二进制有差异。
+      - name: cross build
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: '0'
+        run: |
+          set -euo pipefail
+          out="${RUNNER_TEMP}/agnes-hub-go-${GOOS}-${GOARCH}"
+          go build -trimpath -buildvcs=false -ldflags "-s -w" -o "$out" .
+          ls -l "$out"

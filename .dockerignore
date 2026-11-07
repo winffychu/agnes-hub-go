@@ -1,0 +1,45 @@
+# 构建上下文瘦身：只保留 go build 真正需要的东西
+#   - *.go 与 go.mod（零第三方依赖：没有 go.sum、没有 vendor）
+#   - internal/web/static/*（被 go:embed 编进二进制，必须保留）
+# 其余一律排除。fpk-bundle / 交叉编译产物是两个 ~20MB 的 ELF，
+# 不排除会让上下文膨胀到几十 MB，每次构建都白传一遍。
+
+# 版本控制与本地 agent 目录
+.git
+.github
+.workbuddy
+.workbuddy-ai
+
+# 运行期数据（含上游 API Key 与管理员口令散列，绝不进构建上下文）
+data
+
+# 构建产物与打包中间目录
+dist
+fpk-bundle
+.gotmp
+.smoke
+.probe
+*.exe
+*.exe~
+*.fpk
+agnes-hub-go-linux-*
+throughput_probe_result.json
+server.err
+
+# Python 工具链（镜像内不跑 python）与字节码缓存
+tools
+__pycache__
+*.pyc
+
+# 文档与图标源文件（不参与编译，assets 只被 build_fpk.py 使用）
+docs
+assets
+*.md
+
+# 容器自身定义：改它们不需要重传上下文
+Dockerfile
+docker-compose.yml
+.dockerignore
+
+# 本机私有文件
+.nas_pass

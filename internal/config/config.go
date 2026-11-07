@@ -2096,7 +2096,7 @@ func (s *Store) SetChatPassword(password string) error {
 func (s *Store) SessionToken() string {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	sum := sha256.Sum256([]byte(s.Settings.AdminPasswordSalt + ":" + s.Settings.AdminPasswordHash + ":baiPiao-hub"))
+	sum := sha256.Sum256([]byte(s.Settings.AdminPasswordSalt + ":" + s.Settings.AdminPasswordHash + ":agnes-hub-go"))
 	return hex.EncodeToString(sum[:])
 }
 
