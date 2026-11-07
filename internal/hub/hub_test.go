@@ -116,10 +116,12 @@ func TestDeclaredModelsNeverEscapeManifest(t *testing.T) {
 	if h.Declares(a, "text", "agnes-3.0-flash") {
 		t.Error("账号未声明的模型不能被认定为可调用")
 	}
-	// 配置漏填时退回「声明了该模态」的全集：宁可让上游给出明确错误，
-	// 也不要因为一处配置缺失就把请求挡在网关门外。
-	if got := h.Candidates("text", nil, "agnes-3.0-flash"); len(got) != 1 {
-		t.Fatalf("无人声明该模型时应退回该模态全集，实际 %v", ids(got))
+	// 2026-11-08 行为变更：无人声明该模型时**拒绝下发**（返回空候选 → 上层
+	// ErrNoCapacity 快速失败），不再退回模态全集盲发——盲发未声明模型 = 上游
+	// 400 model_not_found + 烧满重试预算，正是"乱修正/默认值污染"的来源。
+	// 可回滚：恢复 Candidates 的 `return base` 退化分支即可。
+	if got := h.Candidates("text", nil, "agnes-3.0-flash"); len(got) != 0 {
+		t.Fatalf("无人声明该模型时应拒绝下发（空候选），实际 %v", ids(got))
 	}
 }
 

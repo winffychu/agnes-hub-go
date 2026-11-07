@@ -634,6 +634,12 @@ func (h *Hub) Candidates(poolClass string, exclude map[string]bool, requiredMode
 		if len(declared) > 0 {
 			return declared
 		}
+		// 无人声明 requiredModel 时**不再退化为全量候选**：把请求发给未声明
+		// 该模型的账号，上游必 400 model_not_found 并烧满重试预算（auto 链的
+		// 默认值污染会放大此问题）。改为记录并返回空候选，让上层走
+		// ErrNoCapacity——快速失败远好于确定性失败的重试循环。
+		log.Printf("[hub] 无账号声明模型 %s（池 %s），拒绝下发而非盲发", requiredModel, poolClass)
+		return nil
 	}
 	return base
 }

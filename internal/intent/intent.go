@@ -150,12 +150,17 @@ var (
 		//   2) extra_body（嵌套对象，上游实测认 extra_body.image / response_format；
 		//      BuildImageBody 会把 extra_body 整体透传——OpenAI SDK 风格客户端
 		//      与 reveric 都用这个容器装非标参数）
-		"ratio", "extra_body",
+		//   3) return_base64（官方 U5 合法顶层字段，此前未透传 → 客户端要
+		//      b64 输出被静默丢弃）
+		"ratio", "extra_body", "return_base64",
 	}
 	// 视频字段白名单（2026-11-08 对照上游实测定案）：
 	//   - 合法且必要：seconds/mode/size/aspect_ratio/first_frame/last_frame/
 	//     images/audios（keyframe 模式用 first/last_frame，reference 模式用
 	//     images/audios；实测全部被上游接受）
+	//   - extra_body：OpenAI SDK 官方机制（U8 "the SDK merges them into the top
+	//     level"），实测上游服务端也解包校验（嵌套 mode 被接受 / 嵌套 ratio 400）
+	//     —— BuildVideoBody 解包合并到顶层，字段不丢、语义不变形
 	//   - ratio：上游明确 400 "ratio is not an allowed request field"，
 	//     在 PassthroughBlacklist 里剔除（OpenAI 风格客户端可能误传）
 	//   - videos：上游 400 "videos are not supported"（2.5 系不支持参考视频）
@@ -167,6 +172,7 @@ var (
 		"image", "images", "image_url",
 		"first_frame", "last_frame", "first_frame_image", "last_frame_image",
 		"keyframe_image", "reference", "audios",
+		"extra_body",
 	}
 	// 这些键即便不在白名单里也不算「被丢弃」——它们是 chat 形态的固有字段
 	ignorableKeys = map[string]bool{
@@ -710,6 +716,10 @@ func hasValue(v any) bool {
 // BuildImageBody 把 chat 形态的意图翻成上游 /v1/images/generations 请求体。
 func BuildImageBody(res Result, model string, cfg Config, source map[string]any) map[string]any {
 	out := map[string]any{"model": model, "prompt": res.Prompt.Text}
+	// extra_body：图像侧官方语义 = 请求 JSON 中的真实嵌套对象（U5「请勿在请求体
+	// 顶层放置 response_format」「图生图需在 extra_body.image 提供输入图像」）。
+	// 与视频侧（SDK 客户端机制）不同——图像的 extra_body 上游就要求嵌套形态，
+	// **必须整体透传不解包**（上轮已加白名单，此处保持）。
 	for _, k := range ImageFieldWhitelist {
 		if v, ok := source[k]; ok && hasValue(v) {
 			out[k] = v
@@ -734,6 +744,18 @@ func BuildImageBody(res Result, model string, cfg Config, source map[string]any)
 // 时长与算力消耗，凭空注入等于替用户花钱。
 func BuildVideoBody(res Result, model string, cfg Config, source map[string]any) map[string]any {
 	out := map[string]any{"model": model, "prompt": res.Prompt.Text}
+	// extra_body 解包合并（U8 SDK 机制 + 上游服务端解包实测）：OpenAI SDK 用户
+	// 按官方文档把 mode/aspect_ratio/媒体字段放 extra_body，SDK 会合并到请求体
+	// 顶层；非 SDK 客户端手工构造嵌套时，服务端同样解包（实测 extra_body.mode
+	// 被接受、extra_body.ratio 被校验 400）。顶层字段优先，extra_body 只补缺——
+	// 字段不丢失、语义不变形；解包后删除容器，避免把非标字段透传给上游。
+	if eb, ok := source["extra_body"].(map[string]any); ok {
+		for k, v := range eb {
+			if _, exists := source[k]; !exists && hasValue(v) {
+				source[k] = v
+			}
+		}
+	}
 	for _, k := range VideoFieldWhitelist {
 		if v, ok := source[k]; ok && hasValue(v) {
 			out[k] = v

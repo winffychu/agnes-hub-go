@@ -421,12 +421,22 @@ func TestExplicitEndpointForcesModality(t *testing.T) {
 
 func TestExplicitModelIsRespected(t *testing.T) {
 	h := newHarness(t, 0, 1)
-	_, _ = h.post("/v1/images/generations", map[string]any{
-		"model": "agnes-image-2.1-flash", "prompt": "a red apple",
+	// 已声明模型：客户端显式指定必须被尊重
+	_, body := h.post("/v1/images/generations", map[string]any{
+		"model": "agnes-image-2.5-flash", "prompt": "a red apple",
 	})
-	if got := h.mock.lastModelOf("/v1/images/generations"); got != "agnes-image-2.1-flash" {
+	if got := h.mock.lastModelOf("/v1/images/generations"); got != "agnes-image-2.5-flash" {
 		t.Errorf("客户端显式指定的模型必须被尊重，实际上游收到 %q", got)
 	}
+	// 未声明模型：拒绝下发（503 快速失败），不再盲发给未声明账号烧重试预算
+	// （2026-11-08 行为变更，与 Candidates 拒绝盲发配套；可回滚）
+	resp2, _ := h.post("/v1/images/generations", map[string]any{
+		"model": "agnes-image-2.1-flash", "prompt": "a red apple",
+	})
+	if resp2.StatusCode != 503 {
+		t.Errorf("显式指定未声明模型应 503 快速失败，实际 %d（body 含 %q 也可）", resp2.StatusCode, "")
+	}
+	_ = body
 }
 
 func TestIntentPreviewIsFree(t *testing.T) {
