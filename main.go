@@ -18,6 +18,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -86,7 +87,11 @@ func main() {
 	// 初始化自更新器
 	exe, _ := os.Executable()
 	updCfg := updater.Config{
-		Repo:       "my788525/agnes-hub-go",
+		// 默认指向上游发布仓库。fork 部署或容器部署请用环境变量覆盖：
+		//   AGNES_HUB_UPDATE_REPO=winffychu/agnes-hub-go  → 改为跟随自己的 Release
+		//   AGNES_HUB_UPDATE_REPO=off                     → 完全关闭自更新（容器内必须关闭：
+		//                                                   镜像里的二进制无法被替换，替换成功也只是假象）
+		Repo:       updateRepo("my788525/agnes-hub-go"),
 		BinaryName: "agnes-hub-go",
 		DataDir:    *dataDir,
 		// 检查频率：12 小时。自更新是「有就换」，没必要更勤；
@@ -230,7 +235,26 @@ func main() {
 		cancel()
 		wg.Wait()
 	}
-	fmt.Println("baiPiao-hub 已停止。")
+	fmt.Println("agnes-hub-go 已停止。")
+}
+
+// updateRepo 解析自更新目标仓库，支持用环境变量覆盖默认值：
+//
+//	AGNES_HUB_UPDATE_REPO="owner/repo"  跟随指定仓库的 Release
+//	AGNES_HUB_UPDATE_REPO=off|none|disabled|""（空）  关闭自更新
+//
+// 默认值保持上游仓库，便于不开环境变量时行为不变；fork 与容器部署必须显式覆盖。
+func updateRepo(fallback string) string {
+	v, ok := os.LookupEnv("AGNES_HUB_UPDATE_REPO")
+	if !ok {
+		return fallback
+	}
+	v = strings.TrimSpace(v)
+	switch strings.ToLower(v) {
+	case "off", "none", "disabled", "":
+		return ""
+	}
+	return v
 }
 
 // buildListeners 按平台拆分到 listener_linux.go / listener_other.go：
