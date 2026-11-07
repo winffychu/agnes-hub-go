@@ -375,6 +375,15 @@ type Settings struct {
 	// cn_only / com_only 模式不换站，401/403 直接熔断该账号。
 	RegionPriority       string             `json:"region_priority,omitempty"`
 	ModelAliases         map[string]string  `json:"model_aliases"`
+	// FreeModels 官方确认的免费模型清单（动态配置，不硬编码）。
+	// 依据 2026-11-07 官方文档核对：所有 -flash 后缀模型免费，Pro 系与
+	// agnes-video-2.5 付费。上游上线新 flash 模型时，控制台/手改 settings.json
+	// 即可追加，无需改代码重新编译。
+	FreeModels []string `json:"free_models"`
+	// DeadModels 实测失效/已下线的模型（动态配置）。命中该清单的模型：
+	// 不进入 auto 偏好、不作为别名目标、/v1/models 目录中标记 dead。
+	// 剔除力度：默认清单与内置别名已彻底移除死模型，此处只作运行时守门。
+	DeadModels []string `json:"dead_models"`
 	AutoModelName        string             `json:"auto_model_name"`
 	AutoIntent           AutoIntentSettings `json:"auto_intent"`
 	ModelManifestDefault ModelManifest      `json:"model_manifest_default"`
@@ -508,6 +517,8 @@ func DefaultSettings() Settings {
 		AffinityMode:       "session_then_key",
 		DefaultImageTier:   "1k",
 		ModelAliases:       map[string]string{},
+		FreeModels:         []string{},
+		DeadModels:         []string{},
 		AutoModelName:      "agnes-auto",
 		AutoIntent: AutoIntentSettings{
 			ContentScan:      true,
@@ -914,6 +925,12 @@ func normalizeSettings(v *Settings) {
 	if v.ModelAliases == nil {
 		v.ModelAliases = map[string]string{}
 	}
+	if v.FreeModels == nil {
+		v.FreeModels = []string{}
+	}
+	if v.DeadModels == nil {
+		v.DeadModels = []string{}
+	}
 	if v.AutoModelName == "" {
 		v.AutoModelName = d.AutoModelName
 	}
@@ -1204,6 +1221,8 @@ func (s *Store) SettingsSnapshot() Settings {
 	defer s.mu.RUnlock()
 	out := s.Settings
 	out.ModelAliases = cloneMap(s.Settings.ModelAliases)
+	out.FreeModels = append([]string(nil), s.Settings.FreeModels...)
+	out.DeadModels = append([]string(nil), s.Settings.DeadModels...)
 	out.AutoIntent.PreferredModels = cloneListMap(s.Settings.AutoIntent.PreferredModels)
 	out.ModelManifestDefault = s.Settings.ModelManifestDefault.Clone()
 	return out

@@ -14,10 +14,17 @@ import (
 	"agneshub/internal/config"
 )
 
-// 已知模型清单。官方文档与线上实际不一致，这里以**实测线上**为准（2026-11-07
-// 经 /models + 实调核验）：上游清单 9 个模型；agnes-1.5-flash / agnes-2.0-flash
-// 已从上游下线（直连 500 get_channel_failed），agnes-2.5-pro 同样 404，
-// agnes-video-v2.0 不在 /models 清单中（保留映射，但不再默认使用）。
+// 已知模型清单（内置种子）。
+//
+// 2026-11-07 起模型清单改为**动态配置驱动**（settings.json 的 free_models /
+// dead_models，控制台或手改即可维护，无需改代码重编译）。这里的 var 表只是：
+//  1. settings 缺省时的初始种子；
+//  2. 兼容旧调用方的最小静态能力（模态判定仍需要一张"名字→模态"映射）。
+//
+// 免费口径（官方文档核对）：所有 -flash 后缀模型免费；Pro 系与 agnes-video-2.5
+// 付费——运行时以 settings.FreeModels 为准，本表不承载"是否免费"语义。
+// 死模型（2026-11-07 实测下线）：1.5/2.0 文本、2.5-pro、video-v2.0 已从
+// 默认清单与别名**彻底剔除**，运行时以 settings.DeadModels 为准。
 var (
 	TextModels = map[string]bool{
 		"agnes-2.5-flash": true, "agnes-2.0-flash": true, "agnes-1.5-flash": true,
@@ -30,13 +37,54 @@ var (
 	VideoModels = map[string]bool{
 		"agnes-video-v2.0": true, "agnes-video-2.5": true, "agnes-video-2.5-flash": true,
 	}
-	// DeadModels 实测已下线/不可调用的模型。别名与 auto 偏好不得指向它们。
-	// （500 get_channel_failed 会烧满重试预算：retryMax×指数退避，客户端表现为挂死。）
-	DeadModels = map[string]bool{
-		"agnes-1.5-flash": true, "agnes-2.0-flash": true, "agnes-2.5-pro": true,
-		"agnes-video-v2.0": true,
-	}
 )
+
+// 内置死模型种子（仅当 settings.DeadModels 为空时作兜底；一旦运维在
+// settings.json 维护了 dead_models，以配置为准，本种子不再参与判定）。
+var builtinDeadModels = map[string]bool{
+	"agnes-1.5-flash": true, "agnes-2.0-flash": true, "agnes-2.5-pro": true,
+	"agnes-video-v2.0": true,
+}
+
+// IsDead 判定模型是否失效。优先 settings.DeadModels（动态可维护），
+// 配置为空时回落内置种子（保守兜底）。
+func IsDead(model string, dead []string) bool {
+	if len(dead) > 0 {
+		for _, m := range dead {
+			if m == model {
+				return true
+			}
+		}
+		return false
+	}
+	return builtinDeadModels[model]
+}
+
+// IsFree 判定模型是否免费（settings.FreeModels 动态配置，不硬编码）。
+// 空配置时按官方口径启发式：-flash 后缀免费（与 2026-11-07 文档核对一致）。
+func IsFree(model string, free []string) bool {
+	for _, m := range free {
+		if m == model {
+			return true
+		}
+	}
+	if len(free) > 0 {
+		return false // 配置了清单就不做启发式，避免口径漂移
+	}
+	return strings.HasSuffix(strings.ToLower(model), "-flash")
+}
+
+// PruneDead 返回剔除死模型后的清单（保持原顺序），用于默认清单/偏好/
+// 别名目标在运行时守门——加大剔除力度：任何入口拿到清单先过一遍这里。
+func PruneDead(models []string, dead []string) []string {
+	out := models[:0:0]
+	for _, m := range models {
+		if !IsDead(m, dead) {
+			out = append(out, m)
+		}
+	}
+	return out
+}
 
 // BuiltinAliases 兼容旧客户端的常见别名（控制台 model_aliases 可覆写/追加）。
 // 指向已实测下线的 DeadModels 会把请求打进 500 重试循环，全部改指活模型。

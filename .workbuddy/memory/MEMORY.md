@@ -1,7 +1,7 @@
 # 项目长期记忆（agnes-hub-go / 白嫖 Hub）
 
 ## fnOS(飞牛) NAS 热更二进制（最高频踩坑，固化）
-- SSH 节点 192.168.100.3，用户 `admin`（**uid=1000，不是 root**，属 Administrators/docker 组），口令在 `D:/work/M365-fpk/.nas_pass`，用 `paramiko.SSHClient()`（5.0.0 精简版，连接类叫 SSHClient 非 Client）。
+- SSH 节点 10.0.0.3，用户 `admin`（**uid=1000，不是 root**，属 Administrators/docker 组），口令在 `D:/work/M365-fpk/.nas_pass`，用 `paramiko.SSHClient()`（5.0.0 精简版，连接类叫 SSHClient 非 Client）。
 - 二进制路径 `/vol1/@appcenter/agnes-hub/app/baipiao-hub`；数据 `/vol1/@appdata/agnes-hub/data`；端口 4142。app id = `agnes-hub`（应用中心显示名「白嫖 Hub」）。
 - **稳健热更三步（2026-10-10 修正，按这个来）**：
   1. 停服：**PTY sudo** 调 `appcenter-cli stop agnes-hub`（非 PTY 会 panic、且 stop 后进程常残留）→ 取 `pgrep -x baipiao-hub` 的 PID（**必须 `-x` 精确匹配进程名；`-f` 会把 SSH exec_command 自身的 bash 命令行也匹配进来，每次抓到一个瞬时 shell 新 PID，误判残留**）→ **PTY sudo `kill -9 <pid>`**（关键修正：admin 非 root，普通 `pkill -9 -f` / `kill -9` **杀不掉**以 agnes-hub 身份运行的进程，实测旧进程 PID 原封不动活着、healthz 一直显示旧版本）→ 等 2~3s 确认 NO_PROC。
@@ -26,11 +26,11 @@
 ## 发布流水线（固化）
 - 版本单一来源：`main.go` 的 `var version = "x.y.z"`；`tools/build_fpk.py` 与 `tools/release.py` 都从它读，勿手改两处。
 - `tools/release.py`：交叉编译 linux-amd64/arm64 + windows exe（前置校验嵌入版本==main.go）→ 打 `baipiao-hub-{ver}.fpk` + `agnes-hub-go-windows-{ver}.zip` → tag v{ver} → GitHub Release + 上传 5 资产。
-- 跑 release.py 用 venv python（`C:/Users/pguoy/.workbuddy/binaries/python/envs/default/Scripts/python.exe`，有 requests）。设 `GITHUB_PAT` 环境变量（绝不入代码），走代理 `http://127.0.0.1:3067`。
+- 跑 release.py 用 venv python（`C:/Users/<owner>/.workbuddy/binaries/python/envs/default/Scripts/python.exe`，有 requests）。设 `GITHUB_PAT` 环境变量（绝不入代码），走代理 `http://127.0.0.1:<本地代理端口>`。
 - **Release 正文**：`release_notes()` 优先读 `tools/release_notes.md`（支持 `{{VERSION}}` 占位），缺失才回退内置文案。发版时**只改这个 md，不要再改 release.py**（此前正文硬编码在 py 里，导致长期挂着旧版「上游上下文策略」文案）。
 - 顺序：先把脚本/说明改动本地 commit，再跑 release.py，让 tag 指向含这些改动的 commit。
 - release.py 只推 **tag**，分支要**单独 fast-forward 推送**（勿 `--force-with-lease`，本地远程跟踪过期会被拒）。
-- **push 到 GitHub 的凭证坑（2026-10-12 实证）**：本仓库 `credential.helper = helper-selector`，在无 TTY 的agent 环境里会**卡住等交互选源**（前台上git push 直接被 harness SIGTERM 掐死，后台跑则报 `could not read Username ... terminal prompts disabled`）。正解：用 Python `ctypes` 调 `Advapi32.CredReadW("git:https://github.com", 1, ...)` 取出 Windows 凭证管理器里的 token，写进临时文件，再用 `git -c http.proxy=http://127.0.0.1:3067 -c credential.helper= push "<带token的URL>" master:master` 推送（设 `GIT_TERMINAL_PROMPT=0`）。**注意**：PowerShell 的 `Add-Type` 编译 .NET 代码会被安全策略拦（"Add-Type compiles and loads .NET code at runtime"），必须走 ctypes；token只落临时文件、用完即 `rm`，且用 `sed` 把输出里的 `https://xxx@` 打码。
+- **push 到 GitHub 的凭证坑（2026-10-12 实证）**：本仓库 `credential.helper = helper-selector`，在无 TTY 的agent 环境里会**卡住等交互选源**（前台上git push 直接被 harness SIGTERM 掐死，后台跑则报 `could not read Username ... terminal prompts disabled`）。正解：用 Python `ctypes` 调 `Advapi32.CredReadW("git:https://github.com", 1, ...)` 取出 Windows 凭证管理器里的 token，写进临时文件，再用 `git -c http.proxy=http://127.0.0.1:<本地代理端口> -c credential.helper= push "<带token的URL>" master:master` 推送（设 `GIT_TERMINAL_PROMPT=0`）。**注意**：PowerShell 的 `Add-Type` 编译 .NET 代码会被安全策略拦（"Add-Type compiles and loads .NET code at runtime"），必须走 ctypes；token只落临时文件、用完即 `rm`，且用 `sed` 把输出里的 `https://xxx@` 打码。
 - **本地远程跟踪会过期，push 前必须先 fetch**（2026-10-12）：本地显示"ahead 82"，fetch 后实际只 ahead 3——82 是过期假象，直接据此判断会误判推送范围。流程固定为 `fetch → git log origin/master..HEAD 确认内容 → merge-base --is-ancestor 验证快进 → push`。
 - GitHub 仓库 `my788525/agnes-hub-go`；无 `gh` CLI，用 PAT + REST API。
 
@@ -55,7 +55,7 @@
 - 观测：`/healthz` 的 `continuations` / `soft_fail_retries` / `resumed_streams` / `pending` / `accepted`。
 
 ## 客户端接入路径铁律（2026-10-10 实证，血泪）
-**内网一律 `http://192.168.100.3:4142/v1` 直连，绝不要绕任何中间层。** 用户此前把 WorkBuddy 渠道配成 **Cloudflare Tunnel 域名**（NAS 上装了 `com.dustinky.tunnel`，cloudflared `--protocol quic`），导致三大症状：
+**内网一律 `http://10.0.0.3:4142/v1` 直连，绝不要绕任何中间层。** 用户此前把 WorkBuddy 渠道配成 **Cloudflare Tunnel 域名**（NAS 上装了 `com.dustinky.tunnel`，cloudflared `--protocol quic`），导致三大症状：
 - 客户端「思考中」卡 **18 分钟**，网关侧 usage/raw_capture **零痕迹**（请求死在到达网关之前）。
 - 「测试连接」时好时坏：1 秒成功 / 20 秒 / 1 分钟失败。
 - 换回局域网 IP 后 **10/10 全部成功**（决定性对照实验）。

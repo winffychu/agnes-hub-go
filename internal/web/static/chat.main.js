@@ -137,6 +137,7 @@ function renderApp(){
   <div class="topbar">
     <h1><img class="logo" src="/logo.png" alt="Agnes">Agnes AI 助手</h1>
     <span id="topbarInfo" class="topbar-info">加载中...</span>
+    <button class="sm" id="btnTheme" onclick="cycleTheme()" title="主题：自动/暗/亮">🌓</button>
     <button class="sm" id="btnRefresh">刷新</button>
     <button class="sm danger" id="btnLogout">退出</button>
   </div>
@@ -196,6 +197,10 @@ function renderApp(){
   document.getElementById("tabImage").onclick=()=>switchTab("image");
   document.getElementById("tabVideo").onclick=()=>switchTab("video");
   document.getElementById("btnRefresh").onclick=loadHistory;
+  {
+    const t = document.documentElement.getAttribute("data-theme") || "auto";
+    document.getElementById("btnTheme").textContent = t === "dark" ? "🌙" : (t === "light" ? "☀️" : "🌓");
+  }
   document.getElementById("btnLogout").onclick=async()=>{
     await api("/api/logout",{method:"POST"});
     location.reload();

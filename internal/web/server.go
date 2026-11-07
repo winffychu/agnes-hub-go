@@ -871,6 +871,20 @@ func (s *Server) serveAutoImage(w http.ResponseWriter, r *http.Request, item *co
 	}
 	raw := result.ReadAll()
 	decision.ModelUsed = result.ModelUsed
+
+	// 失败先返回：不扣配额、不记 usage done、不落 completed 图片历史。
+	// （此前记账在状态判断之前，上游 4xx/5xx 也会扣计次配额并显示"已完成"。）
+	if result.Status >= 400 {
+		s.logUsageError(item, decision, poolClass, "/v1/images/generations", chatShape, result.Account, result.WaitMS, result.Attempts, decision.Prompt.Text, result.Status, string(raw))
+		extra := decision.Headers()
+		extra["X-Agnes-Hub-Account"] = safeHeader(result.Account.Name)
+		extra["X-Agnes-Hub-Account-Id"] = result.Account.ID
+		extra["X-Agnes-Hub-Wait-Ms"] = strconv.FormatInt(result.WaitMS, 10)
+		extra["X-Agnes-Hub-Attempts"] = strconv.Itoa(result.Attempts)
+		writeJSON(w, result.Status, decodeOrRaw(raw), extra)
+		return
+	}
+
 	s.Store.ChargeKey(item.Key, extractUsage(raw))
 	s.logUsageFull(item, decision, poolClass, "/v1/images/generations", chatShape, result.Account, result.WaitMS, result.Attempts, decision.Prompt.Text)
 
@@ -920,11 +934,6 @@ func (s *Server) serveAutoImage(w http.ResponseWriter, r *http.Request, item *co
 	extra["X-Agnes-Hub-Account-Id"] = result.Account.ID
 	extra["X-Agnes-Hub-Wait-Ms"] = strconv.FormatInt(result.WaitMS, 10)
 	extra["X-Agnes-Hub-Attempts"] = strconv.Itoa(result.Attempts)
-
-	if result.Status >= 400 {
-		writeJSON(w, result.Status, decodeOrRaw(raw), extra)
-		return
-	}
 
 	// 官方形态：原样返回上游结构，程序化客户端零影响
 	if !chatShape {
@@ -984,17 +993,20 @@ func (s *Server) serveAutoVideo(w http.ResponseWriter, r *http.Request, item *co
 	}
 	raw := result.ReadAll()
 	decision.ModelUsed = result.ModelUsed
-	s.logUsageFull(item, decision, poolClass, "/v1/videos", chatShape, result.Account, result.WaitMS, result.Attempts, decision.Prompt.Text)
 
 	extra := decision.Headers()
 	extra["X-Agnes-Hub-Account"] = safeHeader(result.Account.Name)
 	extra["X-Agnes-Hub-Account-Id"] = result.Account.ID
 	extra["X-Agnes-Hub-Wait-Ms"] = strconv.FormatInt(result.WaitMS, 10)
 
+	// 失败先返回：不记 submitted 任务、不扣配额（与生图路径同口径）。
 	if result.Status >= 400 {
+		s.logUsageError(item, decision, poolClass, "/v1/videos", chatShape, result.Account, result.WaitMS, result.Attempts, decision.Prompt.Text, result.Status, string(raw))
 		writeJSON(w, result.Status, decodeOrRaw(raw), extra)
 		return
 	}
+
+	s.logUsageFull(item, decision, poolClass, "/v1/videos", chatShape, result.Account, result.WaitMS, result.Attempts, decision.Prompt.Text)
 
 	payload := decodeMap(raw)
 	videoID := extractVideoID(payload)

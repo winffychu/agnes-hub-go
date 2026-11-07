@@ -10,6 +10,22 @@
     --brand:#2f6fed; --brand-soft:#eaf1ff; --good:#12805c; --good-soft:#e7f6ef;
     --warn:#a86400; --warn-soft:#fdf3e2; --bad:#c0293b; --bad-soft:#fdecee;
     --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,"Liberation Mono",monospace;
+    color-scheme: light;
+  }
+  /* 暗色主题：data-theme="dark" 手动切换；"auto" 跟随系统 prefers-color-scheme */
+  html[data-theme="dark"]{
+    --bg:#0f141a; --panel:#161d26; --line:#2a3441; --ink:#e6edf3; --muted:#8b98a5;
+    --brand:#4d8dff; --brand-soft:#16283f; --good:#3ecf8e; --good-soft:#12291f;
+    --warn:#e2a336; --warn-soft:#332a12; --bad:#f06a78; --bad-soft:#3a1a20;
+    color-scheme: dark;
+  }
+  @media (prefers-color-scheme: dark){
+    html[data-theme="auto"]{
+      --bg:#0f141a; --panel:#161d26; --line:#2a3441; --ink:#e6edf3; --muted:#8b98a5;
+      --brand:#4d8dff; --brand-soft:#16283f; --good:#3ecf8e; --good-soft:#12291f;
+      --warn:#e2a336; --warn-soft:#332a12; --bad:#f06a78; --bad-soft:#3a1a20;
+      color-scheme: dark;
+    }
   }
   *{box-sizing:border-box}
   body{margin:0;background:var(--bg);color:var(--ink);
@@ -29,7 +45,7 @@
   .kpi .k{color:var(--muted);font-size:12px;margin-bottom:4px}
   button{font:inherit;padding:7px 13px;border-radius:9px;border:1px solid var(--line);
     background:#fff;color:var(--ink);cursor:pointer}
-  button:hover{border-color:#c9cfd8}
+  button:hover{border-color:var(--muted)}
   button.primary{background:var(--brand);border-color:var(--brand);color:#fff}
   button.primary:hover{filter:brightness(1.06)}
   button.danger{color:var(--bad);border-color:#f0cdd2}
@@ -59,7 +75,7 @@
   .banner.warn{background:var(--warn-soft);color:var(--warn)}
   .banner.good{background:var(--good-soft);color:var(--good)}
   .banner.bad{background:var(--bad-soft);color:var(--bad)}
-  .bar{height:7px;border-radius:999px;background:#eef1f5;overflow:hidden;min-width:70px}
+  .bar{height:7px;border-radius:999px;background:var(--line);overflow:hidden;min-width:70px}
   .bar>i{display:block;height:100%;background:var(--brand)}
   .login{max-width:380px;margin:8vh auto}
   .hint{font-size:12px;color:var(--muted);margin-top:6px}
@@ -132,11 +148,31 @@
 .live-readout span{font-size:11px;color:var(--sub,#5b6573);display:block}
 .live-legend{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
 .live-legend .lg{display:inline-flex;align-items:center;gap:5px;font-size:12px;
-  background:#eef2f8;border-radius:999px;padding:2px 9px}
+  background:var(--brand-soft);border-radius:999px;padding:2px 9px}
 .live-legend .lg i{width:9px;height:9px;border-radius:2px;display:inline-block}
 </style>
 </head>
 <body>
+<script>
+/* 主题引导：必须在首帧渲染前执行，避免暗色用户闪白屏。
+   三态：auto（跟随系统）/ light / dark，持久化 localStorage。 */
+(function(){
+  const saved = localStorage.getItem("agnes_theme") || "auto";
+  document.documentElement.setAttribute("data-theme", saved);
+})();
+function setTheme(t){
+  document.documentElement.setAttribute("data-theme", t);
+  localStorage.setItem("agnes_theme", t);
+  const b = document.getElementById("btnTheme");
+  if (b) b.textContent = t === "dark" ? "🌙" : (t === "light" ? "☀️" : "🌓");
+  // 主题切换后重绘 canvas 图表取新变量值
+  if (typeof refresh === "function") { try { refresh(); } catch (e) {} }
+}
+function cycleTheme(){
+  const cur = document.documentElement.getAttribute("data-theme") || "auto";
+  setTheme(cur === "auto" ? "dark" : (cur === "dark" ? "light" : "auto"));
+}
+</script>
 
 <div id="app"></div>
 <div id="modalRoot"></div>
@@ -179,7 +215,10 @@ function renderLogin(mustChange){
   document.getElementById("app").innerHTML = `
   <div class="login">
     <div class="card">
-      <h1>Agnes Hub 控制台</h1>
+      <div class="spread">
+        <h1>Agnes Hub 控制台</h1>
+        <button class="sm" id="btnTheme" onclick="cycleTheme()" title="主题：自动/暗/亮">🌓</button>
+      </div>
       <p class="muted">Agnes Hub 聚合网关 · RPM 排队限流</p>
       <div id="toast" class="hide"></div>
       <label>管理员密码</label>
@@ -219,6 +258,7 @@ function renderShell(){
       </div>
       <div class="row">
         <a class="sm primary" href="/chat" target="_blank" rel="noopener" style="text-decoration:none">💬 对话 UI</a>
+        <button class="sm" id="btnTheme" onclick="cycleTheme()" title="主题：自动/暗/亮">🌓</button>
         <button class="sm" id="btnRefresh">刷新</button>
         <button class="sm" id="btnPw">修改密码</button>
         <button class="sm danger" id="btnLogout">退出</button>
@@ -233,6 +273,10 @@ function renderShell(){
   tabs.innerHTML = TABS.map(([k,label])=>`<button data-tab="${k}" class="${state.tab===k?"on":""}">${label}</button>`).join("");
   tabs.querySelectorAll("button").forEach(b=>b.onclick=()=>{ state.tab=b.dataset.tab; renderShell(); refresh(); });
   document.getElementById("btnRefresh").onclick = ()=>refresh();
+  {
+    const t = document.documentElement.getAttribute("data-theme") || "auto";
+    document.getElementById("btnTheme").textContent = t === "dark" ? "🌙" : (t === "light" ? "☀️" : "🌓");
+  }
   document.getElementById("btnLogout").onclick = async ()=>{ await api("/api/logout",{method:"POST"}); location.reload(); };
   document.getElementById("btnPw").onclick = changePassword;
 }
@@ -256,7 +300,7 @@ function arrivalCard(s){
     const over = intervalSec>0 && v > intervalSec;
     const color = over ? "var(--warn, #f59e0b)" : "var(--good, #22c55e)";
     return `<div title="${i}s 前 · ${v} req" style="height:28px;align-items:flex-end;display:flex">
-      <div style="width:100%;height:${Math.max(2,h)}%;background:${v>0?color:"#333"};border-radius:1px;min-height:${v>0?2:0}px"></div></div>`;
+      <div style="width:100%;height:${Math.max(2,h)}%;background:${v>0?color:cssVar("--muted","#555")};border-radius:1px;min-height:${v>0?2:0}px"></div></div>`;
   }).join("");
   const ratio = a.ratio||0;
   const ratioColor = ratio>=1?"var(--good,#22c55e)":"var(--warn,#f59e0b)";
@@ -1050,7 +1094,7 @@ function liveSection(){
       <canvas class="live-canvas" id="cvScale"></canvas>
       <div class="live-readout" id="roScale"></div>
     </div>
-    <div class="muted" style="font-size:11px;margin-top:6px">图表底部竖线：<span style="color:#d64545">红 = 上游 429</span> · <span style="color:#e08a1e">橙 = 熔断打开</span>。</div>
+    <div class="muted" style="font-size:11px;margin-top:6px">图表底部竖线：<span style="color:var(--bad)">红 = 上游 429</span> · <span style="color:var(--warn)">橙 = 熔断打开</span>。</div>
   </div>`;
 }
 
@@ -1065,6 +1109,12 @@ function setupCanvas(cv){
   return {ctx,w,h};
 }
 function inkColor(){ return getComputedStyle(document.body).color || "#5b6573"; }
+// cssVar 读取当前主题的 CSS 变量值（canvas 不认 var(--x)，需运行时取值），
+// 主题切换后下一次重绘自动跟随，无需额外监听。
+function cssVar(name, fallback){
+  const v = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+  return v || fallback;
+}
 function emptyHint(cv, text){
   const {ctx,w,h}=setupCanvas(cv);
   ctx.globalAlpha=.55; ctx.fillStyle=inkColor(); ctx.font="12px sans-serif"; ctx.textAlign="center";
@@ -1114,7 +1164,7 @@ function drawLines(cv, series, opts){
   (opts.events||[]).forEach((e,i)=>{
     if(!e) return;
     const x=padL+(i/(n-1))*plotW;
-    ctx.fillStyle=(e&1)?"#d64545":"#e08a1e";
+    ctx.fillStyle=(e&1)?cssVar("--bad","#d64545"):cssVar("--warn","#e08a1e");
     ctx.fillRect(x-1, h-padB+3, 2, 6);
   });
 }
@@ -1204,7 +1254,7 @@ function drawAccountBars(cv, meta, cols, events){
   (events||[]).forEach((e,i)=>{
     if(!e) return;
     const x=padL+(n>1? (i/(n-1))*plotW : 0);
-    ctx.fillStyle=(e&1)?"#d64545":"#e08a1e";
+    ctx.fillStyle=(e&1)?cssVar("--bad","#d64545"):cssVar("--warn","#e08a1e");
     ctx.fillRect(x-1, h-padB+3, 2, 6);
   });
 }
@@ -1248,8 +1298,8 @@ function drawLive(){
   const cur=load[load.length-1]||0;
   const peak=Math.max.apply(null,load);
   const avg=load.reduce((a,b)=>a+b,0)/load.length;
-  const c1=cur>=100?"#d64545":(cur>=70?"#e08a1e":"#2f9e6f");
-  drawLines(cvL,[{data:load,color:c1,fill:true}],{leftMax:Math.max(120,peak)*1.1,refY:[{v:100,color:"#d64545"}],events});
+  const c1=cur>=100?cssVar("--bad","#d64545"):(cur>=70?cssVar("--warn","#e08a1e"):cssVar("--good","#2f9e6f"));
+  drawLines(cvL,[{data:load,color:c1,fill:true}],{leftMax:Math.max(120,peak)*1.1,refY:[{v:100,color:cssVar("--bad","#d64545")}],events});
   document.getElementById("roLoad").innerHTML=
     `<div><b style="color:${c1}">${cur.toFixed(0)}%</b><span>当前负载率</span></div>
      <div><b>${peak.toFixed(0)}%</b><span>窗口峰值</span></div>
@@ -1261,17 +1311,17 @@ function drawLive(){
   const lmax=Math.max(5,Math.max.apply(null,arrive.concat(done,inf)))*1.25;
   const rmax=Math.max(2,Math.max.apply(null,q))*1.3;
   drawLines(cvS,[
-    {data:q,color:"#e08a1e",fill:true,axis:"r"},
-    {data:arrive,color:"#2f6fd6"},
-    {data:done,color:"#2f9e6f"},
-    {data:inf,color:"#7a52c7",width:1.5,dash:[4,3]}
+    {data:q,color:cssVar("--warn","#e08a1e"),fill:true,axis:"r"},
+    {data:arrive,color:cssVar("--brand","#2f6fd6")},
+    {data:done,color:cssVar("--good","#2f9e6f")},
+    {data:inf,color:cssVar("--muted","#7a52c7"),width:1.5,dash:[4,3]}
   ],{leftMax:lmax,rightMax:rmax,events});
   const last=slice[slice.length-1]||{};
   document.getElementById("roScale").innerHTML=
-    `<div><b style="color:#2f6fd6">${(last.arrive_rps||0).toFixed(1)}</b><span>到达 req/s</span></div>
-     <div><b style="color:#2f9e6f">${(last.done_rps||0).toFixed(1)}</b><span>完成 req/s</span></div>
-     <div><b style="color:#7a52c7">${last.inflight||0}</b><span>上游在途</span></div>
-     <div><b style="color:#e08a1e">${last.queue_depth||0}</b><span>排队</span></div>
+    `<div><b style="color:var(--brand)">${(last.arrive_rps||0).toFixed(1)}</b><span>到达 req/s</span></div>
+     <div><b style="color:var(--good)">${(last.done_rps||0).toFixed(1)}</b><span>完成 req/s</span></div>
+     <div><b style="color:var(--muted)">${last.inflight||0}</b><span>上游在途</span></div>
+     <div><b style="color:var(--warn)">${last.queue_depth||0}</b><span>排队</span></div>
      <div><b>${last.pending||0}</b><span>待转发</span></div>
      <div><b>${last.r429_pm||0}</b><span>429/分钟</span></div>`;
 

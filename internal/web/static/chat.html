@@ -5,13 +5,17 @@
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Agnes AI 助手</title>
 <style>
-:root{--bg:#f0f2f5;--panel:#ffffff;--line:#dfe1e6;--ink:#1c2430;--muted:#65717f;--brand:#2f6fed;--brand-soft:#eaf1ff;--good:#12805c;--good-soft:#e7f6ef;--warn:#a86400;--warn-soft:#fdf3e2;--bad:#c0293b;--bad-soft:#fdecee;}
+:root{--bg:#f0f2f5;--panel:#ffffff;--line:#dfe1e6;--ink:#1c2430;--muted:#65717f;--brand:#2f6fed;--brand-soft:#eaf1ff;--good:#12805c;--good-soft:#e7f6ef;--warn:#a86400;--warn-soft:#fdf3e2;--bad:#c0293b;--bad-soft:#fdecee;color-scheme:light;}
+html[data-theme="dark"]{--bg:#0f141a;--panel:#161d26;--line:#2a3441;--ink:#e6edf3;--muted:#8b98a5;--brand:#4d8dff;--brand-soft:#16283f;--good:#3ecf8e;--good-soft:#12291f;--warn:#e2a336;--warn-soft:#332a12;--bad:#f06a78;--bad-soft:#3a1a20;color-scheme:dark;}
+@media (prefers-color-scheme: dark){
+html[data-theme="auto"]{--bg:#0f141a;--panel:#161d26;--line:#2a3441;--ink:#e6edf3;--muted:#8b98a5;--brand:#4d8dff;--brand-soft:#16283f;--good:#3ecf8e;--good-soft:#12291f;--warn:#e2a336;--warn-soft:#332a12;--bad:#f06a78;--bad-soft:#3a1a20;color-scheme:dark;}
+}
 *{box-sizing:border-box}
 body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif}
-button{font:inherit;padding:8px 16px;border-radius:10px;border:1px solid var(--line);background:#fff;color:var(--ink);cursor:pointer;transition:all .15s}
-button:hover{border-color:#c9cfd8;transform:translateY(-1px)}
+button{font:inherit;padding:8px 16px;border-radius:10px;border:1px solid var(--line);background:var(--panel);color:var(--ink);cursor:pointer;transition:all .15s}
+button:hover{border-color:var(--muted);transform:translateY(-1px)}
 button.primary{background:var(--brand);border-color:var(--brand);color:#fff}
-button.primary:hover{background:#1d5ed8;border-color:#1d5ed8}
+button.primary:hover{filter:brightness(1.12)}
 button.sm{padding:5px 10px;font-size:12px;border-radius:7px}
 button.danger{color:var(--bad);border-color:#f0cdd2}
 .card{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:18px;margin-bottom:14px;box-shadow:0 1px 3px rgba(0,0,0,.04)}
@@ -36,7 +40,7 @@ textarea{min-height:90px;resize:vertical}
 .tabs button{padding:8px 18px;border-radius:20px;font-size:13px;font-weight:500;border:1px solid var(--line);background:#fff;color:var(--muted)}
 .tabs button:hover{border-color:var(--brand);color:var(--brand)}
 .tabs button.on{background:var(--brand);border-color:var(--brand);color:#fff}
-.msg-list{flex:1;overflow-y:auto;padding:20px;background:linear-gradient(180deg,#f8f9fb 0%,var(--bg) 100%)}
+.msg-list{flex:1;overflow-y:auto;padding:20px;background:var(--bg)}
 .msg{margin-bottom:16px;max-width:80%;display:flex;flex-direction:column;animation:fadeIn .2s ease}
 @keyframes fadeIn{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}
 .msg.user{margin-left:auto;align-items:flex-end}
@@ -113,7 +117,7 @@ textarea{min-height:90px;resize:vertical}
 .msg-bubble .md-ul li,.msg-bubble .md-ol li{margin:.25em 0}
 .msg-bubble .md-pre{background:#0f172a;color:#e2e8f0;border-radius:10px;padding:12px 14px;overflow:auto;margin:.6em 0;font-size:12.5px;line-height:1.5;white-space:pre}
 .msg-bubble .md-pre code{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
-.msg-bubble .md-code{background:#eef1f5;color:#b4232f;border-radius:5px;padding:1px 5px;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:.92em}
+.msg-bubble .md-code{background:var(--brand-soft);color:#b4232f;border-radius:5px;padding:1px 5px;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:.92em}
 .msg-bubble .md-quote{border-left:3px solid var(--brand);background:var(--brand-soft);margin:.55em 0;padding:.45em .9em;color:var(--muted);border-radius:0 8px 8px 0}
 .msg-bubble .md-hr{border:none;border-top:1px solid var(--line);margin:.9em 0}
 .msg-bubble .md-a{color:var(--brand);text-decoration:underline}
@@ -163,6 +167,22 @@ textarea{min-height:90px;resize:vertical}
 </style>
 </head>
 <body>
+<script>
+(function(){
+  const saved = localStorage.getItem("agnes_theme") || "auto";
+  document.documentElement.setAttribute("data-theme", saved);
+})();
+function setTheme(t){
+  document.documentElement.setAttribute("data-theme", t);
+  localStorage.setItem("agnes_theme", t);
+  const b = document.getElementById("btnTheme");
+  if (b) b.textContent = t === "dark" ? "🌙" : (t === "light" ? "☀️" : "🌓");
+}
+function cycleTheme(){
+  const cur = document.documentElement.getAttribute("data-theme") || "auto";
+  setTheme(cur === "auto" ? "dark" : (cur === "dark" ? "light" : "auto"));
+}
+</script>
 <div id="app"></div>
 <script src="chat.main.js"></script>
 </body>
