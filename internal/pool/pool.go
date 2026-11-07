@@ -14,9 +14,10 @@ import (
 	"agneshub/internal/config"
 )
 
-// 已知模型清单。官方文档与线上实际不一致，这里以**实测线上**为准：
-// 中国站没有 agnes-1.5-flash（返回 503 model_not_found），反而多出
-// agnes-3.0-flash / agnes-2.5-pro* / agnes-image-2.5-flash / agnes-video-2.5*。
+// 已知模型清单。官方文档与线上实际不一致，这里以**实测线上**为准（2026-11-07
+// 经 /models + 实调核验）：上游清单 9 个模型；agnes-1.5-flash / agnes-2.0-flash
+// 已从上游下线（直连 500 get_channel_failed），agnes-2.5-pro 同样 404，
+// agnes-video-v2.0 不在 /models 清单中（保留映射，但不再默认使用）。
 var (
 	TextModels = map[string]bool{
 		"agnes-2.5-flash": true, "agnes-2.0-flash": true, "agnes-1.5-flash": true,
@@ -29,18 +30,25 @@ var (
 	VideoModels = map[string]bool{
 		"agnes-video-v2.0": true, "agnes-video-2.5": true, "agnes-video-2.5-flash": true,
 	}
+	// DeadModels 实测已下线/不可调用的模型。别名与 auto 偏好不得指向它们。
+	// （500 get_channel_failed 会烧满重试预算：retryMax×指数退避，客户端表现为挂死。）
+	DeadModels = map[string]bool{
+		"agnes-1.5-flash": true, "agnes-2.0-flash": true, "agnes-2.5-pro": true,
+		"agnes-video-v2.0": true,
+	}
 )
 
 // BuiltinAliases 兼容旧客户端的常见别名（控制台 model_aliases 可覆写/追加）。
+// 指向已实测下线的 DeadModels 会把请求打进 500 重试循环，全部改指活模型。
 var BuiltinAliases = map[string]string{
-	"gpt-4o":            "agnes-2.5-flash",
-	"gpt-4o-mini":       "agnes-2.0-flash",
-	"gpt-4-turbo":       "agnes-2.0-flash",
-	"gpt-3.5-turbo":     "agnes-1.5-flash",
-	"claude-3-5-sonnet": "agnes-2.5-flash",
-	"claude-sonnet-4":   "agnes-2.5-flash",
-	"dall-e-3":          "agnes-image-2.1-flash",
-	"gpt-image-1":       "agnes-image-2.1-flash",
+	"gpt-4o":            "agnes-3.0-flash",
+	"gpt-4o-mini":       "agnes-3.0-flash",
+	"gpt-4-turbo":       "agnes-3.0-flash",
+	"gpt-3.5-turbo":     "agnes-2.5-flash",
+	"claude-3-5-sonnet": "agnes-3.0-flash",
+	"claude-sonnet-4":   "agnes-3.0-flash",
+	"dall-e-3":          "agnes-image-2.5-flash",
+	"gpt-image-1":       "agnes-image-2.5-flash",
 }
 
 var (

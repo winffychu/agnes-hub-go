@@ -146,9 +146,9 @@ var (
 		"prompt_extend", "watermark",
 	}
 	VideoFieldWhitelist = []string{
-		"height", "width", "num_frames", "frame_rate", "duration", "seed",
-		"negative_prompt", "resolution", "ratio", "image", "images", "image_url",
-		"first_frame_image", "last_frame_image",
+		"height", "width", "num_frames", "frame_rate", "duration", "seconds", "mode",
+		"seed", "negative_prompt", "resolution", "ratio", "image", "images", "image_url",
+		"first_frame_image", "last_frame_image", "keyframe", "reference",
 	}
 	// 这些键即便不在白名单里也不算「被丢弃」——它们是 chat 形态的固有字段
 	ignorableKeys = map[string]bool{
@@ -693,6 +693,11 @@ func BuildVideoBody(res Result, model string, cfg Config, source map[string]any)
 		if v, ok := source[k]; ok && v != nil && asString(v) != "" {
 			out[k] = v
 		}
+	}
+	// 官方 /v1/videos 对 agnes-video-2.5* 要求 mode 必填（text/keyframe/reference），
+	// 缺失直接 400。纯 prompt 提交等价 mode=text，注入默认值不改变语义。
+	if out["mode"] == "" || out["mode"] == nil {
+		out["mode"] = "text"
 	}
 	if len(res.Prompt.Images) > 0 && cfg.VideoInputField != "" {
 		if _, exists := out[cfg.VideoInputField]; !exists {

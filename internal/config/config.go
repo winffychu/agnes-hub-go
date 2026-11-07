@@ -517,15 +517,17 @@ func DefaultSettings() Settings {
 			VideoInputField:  "image",
 			VideoWaitSec:     0,
 			PreferredModels: map[string][]string{
-				"text":  {"agnes-3.0-flash", "agnes-2.5-flash", "agnes-2.0-flash"},
+				"text":  {"agnes-3.0-flash", "agnes-2.5-flash"},
 				"image": {"agnes-image-2.5-flash", "agnes-image-2.1-flash"},
-				"video": {"agnes-video-2.5-flash", "agnes-video-v2.0"},
+				"video": {"agnes-video-2.5-flash"},
 			},
 		},
 		ModelManifestDefault: ModelManifest{
-			Text:  []string{"agnes-3.0-flash", "agnes-2.5-flash", "agnes-2.0-flash"},
+			// 2026-11-07 实测校准：agnes-2.0-flash 已上游下线（500 get_channel_failed），
+			// 从默认清单移除，避免 auto 偏好选到死模型烧重试预算。
+			Text:  []string{"agnes-3.0-flash", "agnes-2.5-flash"},
 			Image: []string{"agnes-image-2.5-flash", "agnes-image-2.1-flash"},
-			Video: []string{"agnes-video-2.5-flash", "agnes-video-2.5", "agnes-video-v2.0"},
+			Video: []string{"agnes-video-2.5-flash", "agnes-video-2.5"},
 		},
 		RetryMax:            3,
 		RetryBaseBackoffMS:  500,
