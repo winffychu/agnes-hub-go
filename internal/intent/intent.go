@@ -154,20 +154,19 @@ var (
 		//      b64 输出被静默丢弃）
 		"ratio", "extra_body", "return_base64",
 	}
-	// 视频字段白名单（2026-11-08 对照上游实测定案）：
-	//   - 合法且必要：seconds/mode/size/aspect_ratio/first_frame/last_frame/
-	//     images/audios（keyframe 模式用 first/last_frame，reference 模式用
-	//     images/audios；实测全部被上游接受）
-	//   - extra_body：OpenAI SDK 官方机制（U8 "the SDK merges them into the top
-	//     level"），实测上游服务端也解包校验（嵌套 mode 被接受 / 嵌套 ratio 400）
-	//     —— BuildVideoBody 解包合并到顶层，字段不丢、语义不变形
-	//   - ratio：上游明确 400 "ratio is not an allowed request field"，
-	//     在 PassthroughBlacklist 里剔除（OpenAI 风格客户端可能误传）
-	//   - videos：上游 400 "videos are not supported"（2.5 系不支持参考视频）
-	//   - keyframe/prompt_extend：上游 400 非法字段，不透传
+	// 视频字段白名单（2026-11-08 对照上游实测定案，第二轮修订）：
+	//   - 合法：seconds/mode/size/aspect_ratio（6 档，禁 auto）/first_frame/
+	//     last_frame/images/audios（keyframe 用 first/last_frame，reference 用
+	//     images/audios）/image/image_url/seed/negative_prompt/resolution/extra_body
+	//   - **禁止清单（U8 + 实测全部 400，白名单刻意不含）**：width/height/
+	//     num_frames/frame_rate（"forbidden field"，2.5 契约用 size+seconds 表达）、
+	//     quality/num_inference_steps、duration（"not an allowed request field"）、
+	//     ratio/videos/keyframe/prompt_extend
+	//     —— OpenAI 形客户端的这些字段由 openaiVideoToAgnes 转换后再进白名单
+	//   - aspect_ratio=auto：上游 400，转换器负责消除（按模型档位映射）
+	//   - extra_body：SDK 机制（U8），解包合并到顶层（见 BuildVideoBody）
 	VideoFieldWhitelist = []string{
-		"height", "width", "num_frames", "frame_rate", "duration", "seconds", "mode",
-		"size", "aspect_ratio",
+		"seconds", "mode", "size", "aspect_ratio",
 		"seed", "negative_prompt", "resolution",
 		"image", "images", "image_url",
 		"first_frame", "last_frame", "first_frame_image", "last_frame_image",
@@ -337,6 +336,26 @@ func ExtractPrompt(body map[string]any) Prompt {
 				}
 			}
 			break
+		}
+	}
+	// OpenAI 官方视频 API 形：input[] 数组（text 块拼文本、image 块收图）。
+	// 双协议支持的一部分——不解析它，input[] 请求的 prompt 会为空导致上游 400。
+	if arr, ok := body["input"].([]any); ok {
+		for _, raw := range arr {
+			part, ok := raw.(map[string]any)
+			if !ok {
+				continue
+			}
+			switch asString(part["type"]) {
+			case "text":
+				if t := strings.TrimSpace(asString(part["text"])); t != "" {
+					texts = append(texts, t)
+				}
+			case "image":
+				if img := strings.TrimSpace(asString(part["image"])); img != "" {
+					images = append(images, img)
+				}
+			}
 		}
 	}
 	if len(texts) == 0 {
@@ -524,6 +543,9 @@ type Result struct {
 	ModelRequested string
 	ModelUsed      string
 	DroppedFields  []string
+	// ConversionNotes 双协议入站转换说明（OpenAI 形 → Agnes 私有形）。
+	// 仅 OpenAI 形请求非空；agnes-hub 元信息里对外可见，可追溯。
+	ConversionNotes []string
 }
 
 // SourceLabel 判定来源的中文说明。
@@ -547,7 +569,7 @@ func (r Result) Headers() map[string]string {
 
 // Meta 给下游程序化消费的元信息（可含中文）。
 func (r Result) Meta() map[string]any {
-	return map[string]any{
+	out := map[string]any{
 		"intent":          r.Modality,
 		"intent_by":       r.Source,
 		"intent_label":    r.SourceLabel(),
@@ -557,6 +579,13 @@ func (r Result) Meta() map[string]any {
 		"model_used":      r.ModelUsed,
 		"input_images":    len(r.Prompt.Images),
 	}
+	// 双协议入站转换说明（仅 OpenAI 形请求非空）——对外可见，便于客户端
+	// 追溯"我的 input[] 被怎么翻译的"，避免字段神秘变形。
+	if len(r.ConversionNotes) > 0 {
+		out["protocol_converted"] = "openai_video_api"
+		out["conversion_notes"] = r.ConversionNotes
+	}
+	return out
 }
 
 // Decide 主判定。任何分支都不应 panic —— 判定失败回落 text。
@@ -673,6 +702,14 @@ func ChooseModel(declared, preference []string) string {
 
 var tierOnly = regexp.MustCompile(`(?i)^\s*([1-4])\s*k\s*$`)
 
+// normalizeSize 图像档位归一化。边界（owner 裁定：只兼容大小写，防过度）：
+//   - 只接受「数字 + k/K」且数字在 1-4 的输入做大小写归一（1k→1K）；
+//   - 2k→2K 这类**同数字大小写变换是同一档位**，属于本函数职责；
+//   - 绝不做：像素→档位换算（1024x768 原样透传，上游官方声明会归一化）、
+//     档位数值变更（5k/0k 原样透传由上游裁定）、模糊匹配。
+//     任何超出大小写范畴的"帮助"都会造成语义变形——那是乱修正。
+//   - 无参数时回落 cfg.DefaultImageSize（官方 size 必填，不注入必 400；
+//     默认档位是控制台可配置项，非硬编码）。
 func normalizeSize(v any, fallback string) string {
 	if s := strings.TrimSpace(asString(v)); s != "" {
 		if m := tierOnly.FindStringSubmatch(s); m != nil {
@@ -743,7 +780,21 @@ func BuildImageBody(res Result, model string, cfg Config, source map[string]any)
 // 刻意不注入 height/width/num_frames/frame_rate 默认值：这些字段直接决定视频
 // 时长与算力消耗，凭空注入等于替用户花钱。
 func BuildVideoBody(res Result, model string, cfg Config, source map[string]any) map[string]any {
-	out := map[string]any{"model": model, "prompt": res.Prompt.Text}
+	prompt := res.Prompt.Text
+	if strings.TrimSpace(prompt) == "" {
+		// 兜底：OpenAI 形 input[] 的文本由转换器写入 source["prompt"]，
+		// 而 res.Prompt 可能因判定路径未解析 input[] 而为空。
+		prompt = strings.TrimSpace(asString(source["prompt"]))
+	}
+	out := map[string]any{"model": model, "prompt": prompt}
+	// 双协议入站：OpenAI 官方视频 API 形态（input[]/instructions/
+	// input_reference/duration）→ Agnes 私有形。Agnes 私有形请求零改动直通。
+	// 转换说明记录在 notes，供响应元信息与日志追溯（可回滚：删除此调用即
+	// 回到仅私有形支持）。
+	if converted, notes := openaiVideoToAgnes(source); len(notes) > 0 {
+		source = converted
+		res.ConversionNotes = notes
+	}
 	// extra_body 解包合并（U8 SDK 机制 + 上游服务端解包实测）：OpenAI SDK 用户
 	// 按官方文档把 mode/aspect_ratio/媒体字段放 extra_body，SDK 会合并到请求体
 	// 顶层；非 SDK 客户端手工构造嵌套时，服务端同样解包（实测 extra_body.mode
@@ -770,13 +821,27 @@ func BuildVideoBody(res Result, model string, cfg Config, source map[string]any)
 	if out["mode"] == "" || out["mode"] == nil {
 		out["mode"] = "text"
 	}
-	if len(res.Prompt.Images) > 0 && cfg.VideoInputField != "" {
-		if _, exists := out[cfg.VideoInputField]; !exists {
-			if len(res.Prompt.Images) == 1 {
-				out[cfg.VideoInputField] = res.Prompt.Images[0]
-			} else {
-				out[cfg.VideoInputField] = res.Prompt.Images
-			}
+	// 图片注入：仅当请求体里**没有任何媒体字段**时才注入（避免与转换器已设的
+	// first_frame/last_frame/images 重复——上游 400 "image cannot be combined
+	// with first_frame"）。双协议转换器负责 OpenAI 形的媒体映射，此处只兜底
+	// chat 形态（messages 里带图）的私有形请求。
+	hasMedia := false
+	for _, k := range []string{"image", "images", "image_url", "first_frame", "last_frame",
+		"first_frame_image", "last_frame_image", "keyframe_image", "reference"} {
+		if _, ok := out[k]; ok {
+			hasMedia = true
+			break
+		}
+	}
+	if !hasMedia && len(res.Prompt.Images) > 0 && cfg.VideoInputField != "" {
+		if len(res.Prompt.Images) == 1 {
+			out[cfg.VideoInputField] = res.Prompt.Images[0]
+		} else {
+			out[cfg.VideoInputField] = res.Prompt.Images
+		}
+		// chat 形态带图 → 必须 keyframe（text 模式禁带媒体）
+		if m, _ := out["mode"].(string); m == "" || m == "text" {
+			out["mode"] = "keyframe"
 		}
 	}
 	return out
