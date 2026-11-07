@@ -70,6 +70,29 @@ func TestPickAsset(t *testing.T) {
 	}
 }
 
+// fpk / zip 与二进制同名同前缀，且发布时可能排在资产列表前面。
+// 回归：无论顺序如何，都必须选中本平台的裸二进制，不能落到安装包上。
+func TestPickAsset_SkipsPackages(t *testing.T) {
+	assets := []ReleaseAsset{
+		{Name: "agnes-hub-go-1.0.40.fpk"},
+		{Name: "agnes-hub-go-windows-1.0.40.zip"},
+		{Name: "agnes-hub-go-linux-amd64"},
+		{Name: "agnes-hub-go-linux-arm64"},
+	}
+	for _, tc := range []struct{ goos, goarch, want string }{
+		{"linux", "amd64", "agnes-hub-go-linux-amd64"},
+		{"linux", "arm64", "agnes-hub-go-linux-arm64"},
+	} {
+		if a := pickAsset(assets, "agnes-hub-go", tc.goos, tc.goarch); a == nil || a.Name != tc.want {
+			t.Errorf("pickAsset(%s/%s) = %v, want %s", tc.goos, tc.goarch, a, tc.want)
+		}
+	}
+	// 只有安装包、没有任何裸二进制时，必须返回 nil 而不是安装包。
+	if a := pickAsset([]ReleaseAsset{{Name: "agnes-hub-go-1.0.40.fpk"}}, "agnes-hub-go", "linux", "amd64"); a != nil {
+		t.Errorf("pickAsset 只见到 fpk 时应返回 nil，实际 %v", a)
+	}
+}
+
 func TestCheck_Disabled(t *testing.T) {
 	u := New(Config{}, "1.0.0", "/fake/bin", nil)
 	ctx := context.Background()

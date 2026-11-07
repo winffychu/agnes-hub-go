@@ -355,7 +355,7 @@ func (u *Updater) fetchLatestRelease(ctx context.Context) (*GitHubRelease, error
 		return nil, err
 	}
 	req.Header.Set("Accept", "application/vnd.github.v3+json")
-	req.Header.Set("User-Agent", "baiPiao-hub/"+u.Version())
+	req.Header.Set("User-Agent", "agnes-hub-go/"+u.Version())
 
 	resp, err := u.client.Do(req)
 	if err != nil {
@@ -379,29 +379,50 @@ func (u *Updater) fetchLatestRelease(ctx context.Context) (*GitHubRelease, error
 // Asset selection
 // ---------------------------------------------------------------------------
 
+// pickAsset 选出本平台可直接替换的可执行文件。
+//
+// 两趟扫描 + 二进制白名单，是为了消除两个确定性故障：
+//  1. .fpk（NAS 安装包）与 .zip（Windows 绿色包）名字里同样含 binaryName，
+//     若排在资产列表前面会被选中，Apply 阶段必然卡在魔数校验；
+//  2. 兜底分支“任意含 binaryName 的资产”会把别的平台/打包格式换上。
+//
+// 宁可返回 nil（报“没有本平台资产”），也不返回一个注定用不了的资产。
 func pickAsset(assets []ReleaseAsset, binaryName, goos, goarch string) *ReleaseAsset {
-	// Prefer exact match first.
+	want := strings.ToLower(binaryName)
+	isBinary := func(name string) bool {
+		low := strings.ToLower(name)
+		for _, bad := range []string{".fpk", ".zip", ".tar", ".gz", ".txt", ".sha256", ".sig", ".md5"} {
+			if strings.HasSuffix(low, bad) {
+				return false
+			}
+		}
+		return true
+	}
+
+	// 第一趟：精确平台后缀（<bin>-linux-<arch> / <bin>-<os>-<arch>.exe）。
 	for i := range assets {
 		a := &assets[i]
-		if !strings.Contains(a.Name, binaryName) {
+		name := strings.ToLower(a.Name)
+		if !strings.Contains(name, want) || !isBinary(name) {
 			continue
 		}
 		switch {
-		case goos == "windows" && strings.HasSuffix(a.Name, ".exe"):
+		case goos == "windows" && strings.HasSuffix(name, ".exe"):
 			return a
-		case goos == "linux" && goarch == "amd64" && strings.Contains(a.Name, "amd64"):
-			return a
-		case goos == "linux" && goarch == "arm64" && strings.Contains(a.Name, "arm64"):
-			return a
-		case goos == "linux" && strings.HasSuffix(a.Name, ".fpk"):
-			// fpk is arch-neutral for our purposes (contains both)
+		case goos == "linux" && strings.HasSuffix(name, "-"+goarch):
 			return a
 		}
 	}
-	// Fallback: any asset with the binary name.
+
+	// 第二趟：平台关键字兜底（资产名可能带版本号或前缀）。
 	for i := range assets {
-		if strings.Contains(assets[i].Name, binaryName) {
-			return &assets[i]
+		a := &assets[i]
+		name := strings.ToLower(a.Name)
+		if !strings.Contains(name, want) || !isBinary(name) {
+			continue
+		}
+		if strings.Contains(name, goarch) || strings.Contains(name, goos) {
+			return a
 		}
 	}
 	return nil
