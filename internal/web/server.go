@@ -978,6 +978,13 @@ func (s *Server) serveAutoVideo(w http.ResponseWriter, r *http.Request, item *co
 	cfg := autoIntentConfig(settings)
 	upstreamBody := intent.BuildVideoBody(decision, model, cfg, body)
 	decision.DroppedFields = intent.DroppedFields(body, intent.VideoFieldWhitelist)
+	// ratio/videos 是上游实测拒绝的字段，网关刻意剔除——单独记入 blocked
+	// 供日志展示，与"白名单外静默丢弃"区分（reveric 等客户端发 ratio 时能
+	// 从日志看到原因，而不是字段神秘消失后上游 400）。
+	blockedFields := intent.BlockedFields(body, intent.VideoBlockedFields)
+	if len(blockedFields) > 0 {
+		log.Printf("[video] 剔除上游拒绝字段: %v", blockedFields)
+	}
 
 	sessionKey := s.Hub.SessionKey(headerMap(r), item.Key)
 	bodyFor := s.mediaBodyFor(upstreamBody, settings, decision, poolClass, intent.Video, model)

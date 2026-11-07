@@ -144,11 +144,29 @@ var (
 		"size", "response_format", "quality", "style", "seed", "negative_prompt",
 		"image", "images", "image_url", "strength", "aspect_ratio", "width", "height",
 		"prompt_extend", "watermark",
+		// 2026-11-08：兼容 reveric/新客户端的两种形态——
+		//   1) ratio（图像档位+比例形式，实测 size:1K+ratio:16:9 → 200，
+		//      与视频路径不同，图像的 ratio 是上游合法字段）
+		//   2) extra_body（嵌套对象，上游实测认 extra_body.image / response_format；
+		//      BuildImageBody 会把 extra_body 整体透传——OpenAI SDK 风格客户端
+		//      与 reveric 都用这个容器装非标参数）
+		"ratio", "extra_body",
 	}
+	// 视频字段白名单（2026-11-08 对照上游实测定案）：
+	//   - 合法且必要：seconds/mode/size/aspect_ratio/first_frame/last_frame/
+	//     images/audios（keyframe 模式用 first/last_frame，reference 模式用
+	//     images/audios；实测全部被上游接受）
+	//   - ratio：上游明确 400 "ratio is not an allowed request field"，
+	//     在 PassthroughBlacklist 里剔除（OpenAI 风格客户端可能误传）
+	//   - videos：上游 400 "videos are not supported"（2.5 系不支持参考视频）
+	//   - keyframe/prompt_extend：上游 400 非法字段，不透传
 	VideoFieldWhitelist = []string{
 		"height", "width", "num_frames", "frame_rate", "duration", "seconds", "mode",
-		"seed", "negative_prompt", "resolution", "ratio", "image", "images", "image_url",
-		"first_frame_image", "last_frame_image", "keyframe", "reference",
+		"size", "aspect_ratio",
+		"seed", "negative_prompt", "resolution",
+		"image", "images", "image_url",
+		"first_frame", "last_frame", "first_frame_image", "last_frame_image",
+		"keyframe_image", "reference", "audios",
 	}
 	// 这些键即便不在白名单里也不算「被丢弃」——它们是 chat 形态的固有字段
 	ignorableKeys = map[string]bool{
@@ -662,11 +680,38 @@ func normalizeSize(v any, fallback string) string {
 	return fallback
 }
 
+// hasValue 判断请求字段是否携带有效载荷。字符串按非空判定；数组/对象/布尔
+// 等复合值只要存在即有效（此前用 asString 判空，导致 audios/videos 这类
+// 数组字段即使合法携带也会被判为空而丢弃——reveric 引用模式因此失效）。
+func hasValue(v any) bool {
+	switch s := v.(type) {
+	case nil:
+		return false
+	case string:
+		return strings.TrimSpace(s) != ""
+	case json.Number:
+		return s.String() != ""
+	case float64:
+		return true
+	case bool:
+		return true
+	default:
+		// 数组 / map：存在即有效（空数组按无效处理）
+		if arr, ok := v.([]any); ok {
+			return len(arr) > 0
+		}
+		if m, ok := v.(map[string]any); ok {
+			return len(m) > 0
+		}
+		return true
+	}
+}
+
 // BuildImageBody 把 chat 形态的意图翻成上游 /v1/images/generations 请求体。
 func BuildImageBody(res Result, model string, cfg Config, source map[string]any) map[string]any {
 	out := map[string]any{"model": model, "prompt": res.Prompt.Text}
 	for _, k := range ImageFieldWhitelist {
-		if v, ok := source[k]; ok && v != nil && asString(v) != "" {
+		if v, ok := source[k]; ok && hasValue(v) {
 			out[k] = v
 		}
 	}
@@ -690,10 +735,14 @@ func BuildImageBody(res Result, model string, cfg Config, source map[string]any)
 func BuildVideoBody(res Result, model string, cfg Config, source map[string]any) map[string]any {
 	out := map[string]any{"model": model, "prompt": res.Prompt.Text}
 	for _, k := range VideoFieldWhitelist {
-		if v, ok := source[k]; ok && v != nil && asString(v) != "" {
+		if v, ok := source[k]; ok && hasValue(v) {
 			out[k] = v
 		}
 	}
+	// ratio：上游明确 400 "ratio is not an allowed request field"（实测），
+	// 且与 aspect_ratio 语义重复（reveric 等客户端用 aspect_ratio）。
+	// 刻意剔除而非透传——透传 = 把确定性 400 交给客户端。
+	delete(out, "ratio")
 	// 官方 /v1/videos 对 agnes-video-2.5* 要求 mode 必填（text/keyframe/reference），
 	// 缺失直接 400。纯 prompt 提交等价 mode=text，注入默认值不改变语义。
 	if out["mode"] == "" || out["mode"] == nil {
@@ -712,6 +761,25 @@ func BuildVideoBody(res Result, model string, cfg Config, source map[string]any)
 }
 
 // DroppedFields 找出被丢弃的字段（透明化：告诉用户哪些字段没被上游端点接受）。
+// BlockedFields 上游实测拒绝、网关刻意剔除的字段（调用方发来时在响应中
+// 提示原因，避免"字段神秘消失"）。当前仅视频路径的 ratio/videos。
+func BlockedFields(source map[string]any, blocked map[string]string) []string {
+	var out []string
+	for k := range source {
+		if _, ok := blocked[k]; ok {
+			out = append(out, k)
+		}
+	}
+	sortStrings(out)
+	return out
+}
+
+// VideoBlockedFields 视频路径的剔除表（值 = 剔除原因，供控制台/日志展示）。
+var VideoBlockedFields = map[string]string{
+	"ratio":  "上游不接受 ratio（请改用 aspect_ratio）",
+	"videos": "上游 2.5 系不支持参考视频",
+}
+
 func DroppedFields(source map[string]any, whitelist []string) []string {
 	allowed := map[string]bool{"model": true, "messages": true, "prompt": true, "stream": true}
 	for _, k := range whitelist {
