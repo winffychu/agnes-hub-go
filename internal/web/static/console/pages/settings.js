@@ -2,7 +2,7 @@
 // 导入走弹窗预览（append/replace 显式选择）；导出按钮区分含/不含密钥。
 import { api } from "../api.js";
 import { state, MODALITIES } from "../state.js";
-import { esc, toast, openModal } from "../ui.js";
+import { esc, toast, openModal, closeModal } from "../ui.js";
 import { icon } from "../icons.js";
 import { renderCurrent } from "../app.js";
 
