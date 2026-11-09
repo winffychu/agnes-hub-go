@@ -2,7 +2,7 @@
 // 性能原则：每个页面只拉自己需要的接口；动作后局部刷新（不整页重绘）；顶部细进度条反馈。
 import { api } from "./api.js";
 import { state } from "./state.js";
-import { num, toast, openModal, closeModal } from "./ui.js";
+import { num, toast, openModal, closeModal, errorBlock, bindErrorRetry } from "./ui.js";
 import { cycleTheme, syncThemeIcon } from "./theme.js";
 import { icon } from "./icons.js";
 import { viewOverview, bindOverview, loadOverview } from "./pages/overview.js";
@@ -57,25 +57,32 @@ export async function go(tab, opts={}){
     // 立即渲染骨架（不阻塞），再拉数据。
     paint(page);
   }
-  await loadPage(page);
-  if(firstPaint) paint(page);   // 数据到位后只重绘本页
+  const okLoad = await loadPage(page);
+  // 加载失败时 loadPage 已写入错误卡；只有成功才重绘（否则错误态会被陈旧视图覆盖）
+  if(okLoad && firstPaint) paint(page);
 }
 
+/* 返回 true=加载成功（调用方据此决定是否重绘视图）；失败时视图区已写成错误卡 */
 export async function loadPage(page){
-  if(!page.load) return;
+  if(!page.load) return true;
   progress(true);
   try{ await page.load(); }
   catch(e){
-    if(e.status === 401){ renderLogin(false); return; }
-    toast(e.message,"bad");
+    if(e.status === 401){ renderLogin(false); return false; }
+    // 失败写进视图区（内联错误卡 + 重试），不再 toast 吞错——QA 决议：错误必须可见可恢复
+    const v = document.getElementById("view");
+    if(v){ v.innerHTML = errorBlock(e.message); bindErrorRetry(()=>loadPage(page).then(ok=>{ if(ok) paint(page); })); }
+    document.title = `Agnes Hub · ${page.label||""}`;
+    return false;
   } finally { progress(false); }
+  return true;
 }
 
 /* 当前页动作后刷新：重拉本页数据再重绘（只碰当前页的接口，不整页全刷） */
 export async function renderCurrent(){
   const page = PAGES[state.tab]||PAGES.overview;
-  await loadPage(page);
-  paint(page);
+  const okLoad = await loadPage(page);
+  if(okLoad) paint(page);
 }
 
 function paint(page){

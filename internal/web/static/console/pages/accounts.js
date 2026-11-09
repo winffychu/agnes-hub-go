@@ -1,13 +1,15 @@
-// 账号池页:搜索/筛选工具条 + 精简列表;添加走两步表单(必填 → 高级折叠),编辑同构。
-// 数据逻辑与 API 契约与 v2 一致，仅交互重组。
+// 账号池页:搜索/筛选/分页工具条 + tbody 事件委托 + 行操作收敛。
+// 弹窗走 ui.js 统一关闭通路；表单带字段级校验与错误恢复。
 import { api } from "../api.js";
 import { state, POOLS, MODALITIES, TYPES, DEFAULT_BASE_BY_TYPE } from "../state.js";
-import { esc, num, toast, openModal, closeModal, emptyBlock } from "../ui.js";
+import { esc, num, toast, openModal, closeModal, emptyBlock, setFieldError, clearFieldErrors } from "../ui.js";
 import { icon } from "../icons.js";
 import { renderCurrent } from "../app.js";
 
-/* ---------- 页内筛选状态（模块私有，重进页面保留） ---------- */
+/* ---------- 页内状态（模块私有，重进页面保留） ---------- */
 const FILTER = { q:"", status:"all", group:"all" };
+const PAGE_SIZE = 20;
+const PAGER = { page:1 };
 
 function visibleAccounts(accs){
   const q = FILTER.q.trim().toLowerCase();
@@ -29,6 +31,40 @@ function manifestEditor(id, manifest){
   return MODALITIES.map(mod=>`
     <div><label>${mod} 模型清单（逗号分隔；留空 = 不支持）</label>
     <input id="${id}_${mod}" value="${esc((m[mod]||[]).join(", "))}" placeholder="例如 model-a, model-b"></div>`).join("");
+}
+
+function rowHtml(a){
+  const eff = a.rpm_effective||{}, base = a.rpm_base||{};
+  const rpm = POOLS.filter(p=>(base[p]||0)>0).map(p=>{
+    const b = base[p], e = eff[p];
+    // 安全阀(0.9)本身就让 e<b 恒成立；只有 429 自适应重度降速才值得标 warn
+    return `<span class="badge ${e<b*0.5?"warn":""}" title="标称 ${b} → 校准后 ${e}">${p} ${e}</span>`;
+  }).join(" ");
+  const st = [];
+  st.push(a.enabled?'<span class="badge ok">启用</span>':'<span class="badge off">停用</span>');
+  if(a.penalty_remaining_ms>0) st.push('<span class="badge warn">冷却</span>');
+  if(a.stats?.rate_limited) st.push(`<span class="badge warn" title="累计被限流 ${a.stats.rate_limited} 次">限流 ${a.stats.rate_limited}</span>`);
+  return `<tr data-id="${esc(a.id)}">
+    <td>
+      <b>${esc(a.name)}</b> <span class="badge">${esc(a.access_type)}</span>${a.group?` <span class="badge info">${esc(a.group)}</span>`:""}
+      <div class="cell-sub mono">${esc(a.api_key_masked)}</div>
+      <div class="cell-sub" title="${esc(a.base_url)}">${esc(a.base_url)}</div>
+    </td>
+    <td style="white-space:nowrap">${st.join(" ")}</td>
+    <td>${rpm||'<span class="muted">—</span>'}</td>
+    <td>${MODALITIES.map(mod=>{
+      const list=a.model_manifest?.[mod]||[];
+      return list.length? `<div class="cell-sub"><b style="color:var(--ink-2)">${mod}</b> <span class="mono">${esc(list.join(", "))}</span></div>`:"";
+    }).join("")||'<span class="muted">未声明</span>'}</td>
+    <td class="num" style="white-space:nowrap">${num(a.stats?.requests)}<div class="cell-sub">错 ${num(a.stats?.errors)}</div></td>
+    <td style="white-space:nowrap">
+      <button class="sm" data-act="test" data-id="${esc(a.id)}">测试</button>
+      <button class="sm" data-act="edit" data-id="${esc(a.id)}">编辑</button>
+      <button class="sm ghost icon-btn" data-act="toggle" data-id="${esc(a.id)}" data-on="${a.enabled?1:0}"
+        title="${a.enabled?"停用":"启用"}">${icon(a.enabled?"x":"play",13)}</button>
+      <button class="sm ghost icon-btn danger" data-act="del" data-id="${esc(a.id)}" title="删除">${icon("trash",13)}</button>
+    </td>
+  </tr>`;
 }
 
 export function viewAccounts(){
@@ -69,58 +105,69 @@ export function viewAccounts(){
       <thead><tr><th>账号</th><th>状态</th><th>各池有效 RPM</th><th>模型清单</th><th>请求</th><th>操作</th></tr></thead>
       <tbody id="accTbody"></tbody>
     </table></div>
+    <div id="accPager" style="display:flex;align-items:center;gap:6px;padding:10px 16px;border-top:1px solid var(--line-soft)"></div>
   </div>`;
 }
 
-/* 只重绘表格行 + 计数（搜索输入时不重建工具栏，避免丢焦点） */
+/* 只重绘表格行 + 计数 + 分页（搜索输入时不重建工具栏，避免丢焦点） */
 function paintRows(){
   const all = (state.accounts&&state.accounts.accounts)||[];
   const accs = visibleAccounts(all);
-  const rows = accs.map(a=>{
-    const eff = a.rpm_effective||{}, base = a.rpm_base||{};
-    const rpm = POOLS.filter(p=>(base[p]||0)>0).map(p=>{
-      const b = base[p], e = eff[p];
-      // 安全阀(0.9)本身就让 e<b 恒成立；只有 429 自适应重度降速才值得标 warn
-      return `<span class="badge ${e<b*0.5?"warn":""}" title="标称 ${b} → 校准后 ${e}">${p} ${e}</span>`;
-    }).join(" ");
-    const st = [];
-    st.push(a.enabled?'<span class="badge ok">启用</span>':'<span class="badge off">停用</span>');
-    if(a.penalty_remaining_ms>0) st.push('<span class="badge warn">冷却</span>');
-    if(a.stats?.rate_limited) st.push(`<span class="badge warn" title="累计被限流 ${a.stats.rate_limited} 次">限流 ${a.stats.rate_limited}</span>`);
-    return `<tr>
-      <td>
-        <b>${esc(a.name)}</b> <span class="badge">${esc(a.access_type)}</span>${a.group?` <span class="badge info">${esc(a.group)}</span>`:""}
-        <div class="cell-sub mono">${esc(a.api_key_masked)}</div>
-        <div class="cell-sub" title="${esc(a.base_url)}">${esc(a.base_url)}</div>
-      </td>
-      <td style="white-space:nowrap">${st.join(" ")}</td>
-      <td>${rpm||'<span class="muted">—</span>'}</td>
-      <td>${MODALITIES.map(mod=>{
-        const list=a.model_manifest?.[mod]||[];
-        return list.length? `<div class="cell-sub"><b style="color:var(--ink-2)">${mod}</b> <span class="mono">${esc(list.join(", "))}</span></div>`:"";
-      }).join("")||'<span class="muted">未声明</span>'}</td>
-      <td class="num" style="white-space:nowrap">${num(a.stats?.requests)}<div class="cell-sub">错 ${num(a.stats?.errors)}</div></td>
-      <td style="white-space:nowrap">
-        <button class="sm" data-act="test" data-id="${esc(a.id)}">测试</button>
-        <button class="sm" data-act="edit" data-id="${esc(a.id)}">编辑</button>
-        <button class="sm ghost icon-btn" data-act="toggle" data-id="${esc(a.id)}" data-on="${a.enabled?1:0}"
-          title="${a.enabled?"停用":"启用"}">${icon(a.enabled?"x":"play",13)}</button>
-        <button class="sm ghost icon-btn danger" data-act="del" data-id="${esc(a.id)}" title="删除">${icon("trash",13)}</button>
-      </td>
-    </tr>`;
-  }).join("");
+  const pages = Math.max(1, Math.ceil(accs.length/PAGE_SIZE));
+  if(PAGER.page>pages) PAGER.page = pages;
+  const slice = accs.slice((PAGER.page-1)*PAGE_SIZE, PAGER.page*PAGE_SIZE);
+  const rows = slice.map(rowHtml).join("");
   const tb = document.getElementById("accTbody");
   if(!tb) return;
   tb.innerHTML = rows||`<tr><td colspan="6">${emptyBlock(all.length?"search":"users", all.length?"没有匹配筛选条件的账号":"暂无账号 · 点「添加账号」或「导入」开始")}</td></tr>`;
   const cnt = document.getElementById("accCount");
   if(cnt) cnt.textContent = `${accs.length}/${all.length}`;
-  tb.querySelectorAll("button[data-act]").forEach(b=>b.onclick=()=>accountAction(b.dataset.act,b.dataset.id,b.dataset.on));
+  // 分页控件
+  const pager = document.getElementById("accPager");
+  if(pager){
+    if(pages<=1){ pager.innerHTML=""; }
+    else{
+      pager.innerHTML = `
+        <button class="sm ghost" data-pg="prev" ${PAGER.page<=1?"disabled":""}>上一页</button>
+        <span class="muted" style="font-size:12px">第 ${PAGER.page} / ${pages} 页 · ${accs.length} 条</span>
+        <button class="sm ghost" data-pg="next" ${PAGER.page>=pages?"disabled":""}>下一页</button>`;
+      pager.querySelectorAll("button[data-pg]").forEach(b=>b.onclick=()=>{
+        PAGER.page += b.dataset.pg==="next"?1:-1; paintRows();
+      });
+    }
+  }
+}
+
+export function bindAccountEvents(){
+  document.getElementById("btnOpenAdd").onclick = ()=>accountFormModal(null);
+  document.getElementById("btnOpenBulk").onclick = bulkImportModal;
+  // 搜索/筛选：输入即筛并回第一页，只重绘表格行（不重建工具栏，避免丢焦点）
+  const si = document.getElementById("accSearch");
+  si.oninput = ()=>{ FILTER.q = si.value; PAGER.page = 1; paintRows(); };
+  document.getElementById("accFStatus").onchange = e=>{ FILTER.status = e.target.value; PAGER.page = 1; paintRows(); };
+  document.getElementById("accFGroup").onchange = e=>{ FILTER.group = e.target.value; PAGER.page = 1; paintRows(); };
+  document.getElementById("btnBulkUpdate").onclick = async ()=>{
+    const op = document.getElementById("bulkOp").value;
+    try{
+      const r = await api("/api/accounts/bulk-update",{method:"POST",body:JSON.stringify({
+        group:document.getElementById("bulkGroup").value.trim(), enabled: op==="enable"
+      })});
+      toast(`已更新 ${r.updated} / ${r.matched} 个账号`,"good"); renderCurrent();
+    }catch(e){ toast(e.message,"bad"); }
+  };
+  // 行操作：tbody 级事件委托——重绘天然免疫，重复绑定问题根治
+  const tb = document.getElementById("accTbody");
+  tb.addEventListener("click", (ev)=>{
+    const b = ev.target.closest("button[data-act]");
+    if(!b) return;
+    accountAction(b.dataset.act, b.dataset.id, b.dataset.on);
+  });
+  paintRows();
 }
 
 /* ---------- 两步表单（添加 / 编辑共用骨架） ----------
-   第 1 步：必填三项 name / api_key / access_type。
-   第 2 步：<details> 折叠的高级项：base_url、分组、并发、优先级、兜底模型、
-           各池 RPM 覆盖、模型清单。默认折叠，不挡新手路径。 */
+   必填：name / api_key(编辑可留空) / access_type；高级项收进 details。
+   提交：字段级校验（红框+行内文案），失败保留输入可重试。 */
 function accountFormModal(acc){
   const isEdit = !!acc;
   const id = isEdit ? acc.id : null;
@@ -128,7 +175,7 @@ function accountFormModal(acc){
   const rpmOv = isEdit ? (acc.rpm_overrides||{}) : {};
   const mf = isEdit ? (acc.model_manifest||{}) : {};
   openModal(`
-  <div class="modal-back" data-close="1">
+  <div class="modal-back">
     <div class="modal wide">
       <h2>${isEdit?`编辑账号 · ${v("name")}`:"添加账号"}</h2>
       <div class="modal-sub">${isEdit?"API Key 留空 = 保留原 Key":"只需名称、Key、类型三项即可创建；其余保持默认"}</div>
@@ -165,12 +212,13 @@ function accountFormModal(acc){
         </div>
       </details>
 
-      <div style="margin-top:16px;display:flex;justify-content:flex-end;gap:8px">
+      <div id="formErr" style="margin-top:10px"></div>
+      <div style="margin-top:12px;display:flex;justify-content:flex-end;gap:8px">
         <button data-close="1">取消</button>
         <button class="primary" id="btnSaveAcc">${isEdit?"保存":"添加账号"}</button>
       </div>
     </div>
-  </div>`);
+  </div>`, {noFocus:false});
   const typeSel = document.getElementById("fType");
   const syncBaseHint = ()=>{
     const baseEl = document.getElementById("fBase");
@@ -179,11 +227,18 @@ function accountFormModal(acc){
   typeSel.onchange = syncBaseHint; syncBaseHint();
 
   document.getElementById("btnSaveAcc").onclick = async ()=>{
+    const btn = document.getElementById("btnSaveAcc");
+    clearFieldErrors(document.querySelector(".modal"));
+    const name = document.getElementById("fName").value.trim();
+    const key = document.getElementById("fKey").value.trim();
+    let bad = false;
+    if(!name){ setFieldError("fName","名称必填"); bad = true; }
+    if(!isEdit && !key){ setFieldError("fKey","API Key 必填"); bad = true; }
+    if(bad) return;
     const manifest = {}; MODALITIES.forEach(m=>manifest[m]=document.getElementById("fMf_"+m).value.split(",").map(s=>s.trim()).filter(Boolean));
     const rpm = {}; POOLS.forEach(p=>{ const val=document.getElementById("fRPM_"+p).value.trim(); if(val!=="") rpm[p]=Number(val); });
     const body = {
-      name:document.getElementById("fName").value,
-      base_url:document.getElementById("fBase").value,
+      name, base_url:document.getElementById("fBase").value,
       access_type:document.getElementById("fType").value,
       group:document.getElementById("fGroup").value,
       max_concurrency:Number(document.getElementById("fConc").value)||8,
@@ -191,26 +246,24 @@ function accountFormModal(acc){
       default_model:document.getElementById("fDefaultModel").value,
       model_manifest:manifest, rpm_overrides:rpm
     };
-    if(!body.name.trim()){ toast("名称必填","bad"); document.getElementById("fName").focus(); return; }
-    const k = document.getElementById("fKey").value.trim();
-    if(isEdit){ if(k!=="") body.api_key = k; }
-    else {
-      if(!k){ toast("API Key 必填","bad"); document.getElementById("fKey").focus(); return; }
-      body.api_key = k;
-    }
+    if(key) body.api_key = key;
+    btn.disabled = true; btn.textContent = "保存中…";
     try{
       if(isEdit) await api("/api/accounts/"+id,{method:"PATCH",body:JSON.stringify(body)});
       else await api("/api/accounts",{method:"POST",body:JSON.stringify(body)});
       toast(isEdit?"已保存":"账号已添加","good"); closeModal(); renderCurrent();
-    }catch(e){ toast(e.message,"bad"); }
+    }catch(e){
+      btn.disabled = false; btn.textContent = isEdit?"保存":"添加账号";
+      // 错误保留输入（弹窗未关），显示在表单内可重试
+      document.getElementById("formErr").innerHTML = `<div class="banner bad" style="margin-bottom:0">${esc(e.message)}</div>`;
+    }
   };
-  document.getElementById("fName").focus();
 }
 
 /* ---------- 批量导入弹窗 ---------- */
 function bulkImportModal(){
   openModal(`
-  <div class="modal-back" data-close="1">
+  <div class="modal-back">
     <div class="modal">
       <h2>批量导入账号</h2>
       <div class="modal-sub">每行：<span class="mono">名称,key[,base_url[,access_type[,group]]]</span>，# 开头的行忽略</div>
@@ -230,19 +283,20 @@ agnes-2,sk-yyyy,https://api.example.com/v1,free,cn"></textarea>
       document.getElementById("bulkResult").innerHTML =
         `<div class="banner good">成功导入 ${r.added_count} 个账号</div>${f}`;
       renderCurrent();
-    }catch(e){ toast(e.message,"bad"); }
+    }catch(e){
+      document.getElementById("bulkResult").innerHTML = `<div class="banner bad">${esc(e.message)}</div>`;
+    }
   };
-  document.getElementById("bulkText").focus();
 }
 
 /* ---------- 测试结果弹窗 ---------- */
 function testResultModal(r){
   const drift = (r.drift||[]).map(d=>`<div class="banner warn">${esc(d.modality)} 的 <span class="mono">${esc(d.model)}</span>：${esc(d.issue)}</div>`).join("");
   openModal(`
-  <div class="modal-back" data-close="1">
+  <div class="modal-back">
     <div class="modal reqbox">
       <div class="card-head"><h2>账号测试结果</h2><span class="grow"></span>
-        <button class="sm ghost icon-btn" data-close="1">${icon("x",14)}</button></div>
+        <button class="sm ghost icon-btn" data-close="1" title="关闭">${icon("x",14)}</button></div>
       <div style="padding:0 20px 20px">
         <div class="banner ${r.ok?"good":"bad"}">HTTP ${r.status} · ${r.latency_ms}ms · ${esc(r.hint)}</div>
         ${drift}
@@ -254,26 +308,6 @@ function testResultModal(r){
   </div>`);
 }
 
-export function bindAccountEvents(){
-  document.getElementById("btnOpenAdd").onclick = ()=>accountFormModal(null);
-  document.getElementById("btnOpenBulk").onclick = bulkImportModal;
-  // 搜索/筛选：输入即筛，只重绘表格行（不重建工具栏，避免输入丢焦点）
-  const si = document.getElementById("accSearch");
-  si.oninput = ()=>{ FILTER.q = si.value; paintRows(); };
-  document.getElementById("accFStatus").onchange = e=>{ FILTER.status = e.target.value; paintRows(); };
-  document.getElementById("accFGroup").onchange = e=>{ FILTER.group = e.target.value; paintRows(); };
-  document.getElementById("btnBulkUpdate").onclick = async ()=>{
-    const op = document.getElementById("bulkOp").value;
-    try{
-      const r = await api("/api/accounts/bulk-update",{method:"POST",body:JSON.stringify({
-        group:document.getElementById("bulkGroup").value.trim(), enabled: op==="enable"
-      })});
-      toast(`已更新 ${r.updated} / ${r.matched} 个账号`,"good"); renderCurrent();
-    }catch(e){ toast(e.message,"bad"); }
-  };
-  paintRows();
-}
-
 async function accountAction(act,id,on){
   try{
     if(act==="test"){
@@ -282,7 +316,13 @@ async function accountAction(act,id,on){
       testResultModal(r);
       return;
     }
-    if(act==="toggle"){ await api("/api/accounts/"+id,{method:"PATCH",body:JSON.stringify({enabled:on!=="1"})}); }
+    if(act==="toggle"){
+      await api("/api/accounts/"+id,{method:"PATCH",body:JSON.stringify({enabled:on!=="1"})});
+      const acc = ((state.accounts&&state.accounts.accounts)||[]).find(x=>x.id===id);
+      if(acc){ acc.enabled = !acc.enabled; paintRows(); }  // 局部更新：只重绘行，不重拉
+      toast(acc&&acc.enabled?"已启用":"已停用","good");
+      return;
+    }
     if(act==="del"){ if(!confirm("确认删除该账号？")) return; await api("/api/accounts/"+id,{method:"DELETE"}); }
     if(act==="edit"){
       const acc = ((state.accounts&&state.accounts.accounts)||[]).find(x=>x.id===id); if(!acc) return;

@@ -1129,15 +1129,32 @@ func (s *Server) apiExport(w http.ResponseWriter, r *http.Request) {
 		s.deny(w)
 		return
 	}
+	// keys=0 → 脱敏导出（不含账号 API Key 明文），供归档/分享；默认 keys=1 全量导出（可回导）。
+	includeKeys := true
+	if v := r.URL.Query().Get("keys"); v == "0" || strings.EqualFold(v, "false") {
+		includeKeys = false
+	}
 	settings := s.Store.SettingsSnapshot()
 	settings.AdminPasswordHash = ""
 	settings.AdminPasswordSalt = ""
+	accounts := s.Store.AccountsSnapshot()
+	if !includeKeys {
+		// 深拷贝并抹掉 api_key，避免改到运行期共享对象。
+		masked := make([]*config.Account, len(accounts))
+		for i, a := range accounts {
+			cp := *a
+			cp.APIKey = ""
+			masked[i] = &cp
+		}
+		accounts = masked
+	}
 	writeJSON(w, 200, map[string]any{
-		"version":     2,
-		"exported_at": time.Now().Format("2006-01-02 15:04:05"),
-		"accounts":    s.Store.AccountsSnapshot(),
-		"keys":        s.Store.KeysSnapshot(),
-		"settings":    settings,
+		"version":       2,
+		"exported_at":   time.Now().Format("2006-01-02 15:04:05"),
+		"keys_included": includeKeys,
+		"accounts":      accounts,
+		"downstream_keys": s.Store.KeysSnapshot(),
+		"settings":      settings,
 	}, nil)
 }
 

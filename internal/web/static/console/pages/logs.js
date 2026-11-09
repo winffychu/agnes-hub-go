@@ -1,4 +1,5 @@
-// 用量日志页(含完整请求弹窗)。
+// 用量日志页(含完整请求弹窗)。行级按钮走事件委托（重绘免疫）。
+import { api } from "../api.js";
 import { state } from "../state.js";
 import { esc, toast, openModal, copyText, emptyBlock } from "../ui.js";
 import { icon } from "../icons.js";
@@ -28,8 +29,12 @@ export function viewLogs(){
 }
 
 export function bindLogs(){
-  document.getElementById("view").querySelectorAll("button[data-req]").forEach(x=>{
-    x.onclick = ()=>showUserRequest(Number(x.dataset.req));
+  // tbody 级委托：tbody 每次重绘都是新元素，不会累积监听器
+  const tb = document.querySelector("#view tbody");
+  if(!tb) return;
+  tb.addEventListener("click", (ev)=>{
+    const b = ev.target.closest("button[data-req]");
+    if(b) showUserRequest(Number(b.dataset.req));
   });
 }
 
@@ -45,10 +50,10 @@ export function showUserRequest(i){
     ["阶段", l.phase], ["stream", l.stream],
   ].filter(x=>x[1]!=null && x[1]!=="").map(x=>`<div class="kv"><span class="kk">${esc(x[0])}</span> <span class="mono">${esc(String(x[1]))}</span></div>`).join("");
   openModal(`
-    <div class="modal-back" data-close="1">
+    <div class="modal-back">
       <div class="modal reqbox">
         <div class="card-head"><h2>用户提出的完整请求</h2><span class="grow"></span>
-          <button class="sm ghost icon-btn" data-close="1">${icon("x",14)}</button></div>
+          <button class="sm ghost icon-btn" data-close="1" title="关闭">${icon("x",14)}</button></div>
         <div style="padding:0 20px 20px">
         ${truncated?`<div class="banner warn">该字段在落盘时已被截断（仅保留前 N 字节），以下为已保留部分。</div>`:""}
         <div class="row" style="margin-bottom:8px">
