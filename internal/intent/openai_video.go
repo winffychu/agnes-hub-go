@@ -1,6 +1,6 @@
 // OpenAI 官方视频 API 形态 → Agnes 私有契约的入站转换。
 //
-// 双协议支持（owner 裁定）：部分客户端只说 OpenAI 官方视频 API（input[] 数组 /
+// 双协议支持：部分客户端只说 OpenAI 官方视频 API（input[] 数组 /
 // instructions / input_reference / duration / aspect_ratio=auto），部分只说
 // Agnes 私有形（prompt + mode + size + seconds + first_frame/audios）。
 // 网关在入站侧识别 OpenAI 形特征字段，转换为 Agnes 私有形后再走统一白名单；

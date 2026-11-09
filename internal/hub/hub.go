@@ -71,7 +71,7 @@ type Metrics struct {
 	// error 帧 / 传输层异常时自动重连续写），观测上游断流的频繁程度。
 	ResumedStreams atomic.Int64
 	// PanicsTotal 记录被 recover 兜住并已降级（而非进程崩溃）的 panic 次数，
-	// 供 /metrics 观测与「挂机健康度」判断（见 P0-2）。
+	// 供 /metrics 观测与「挂机健康度」判断。
 	PanicsTotal atomic.Int64
 	// LastSuccessNS 全局最近一次上游成功的 UnixNano 时间戳，
 	// 供 /healthz 的 last_success_age_ms（「最近多久有流量真正跑通」）观测。
@@ -108,16 +108,16 @@ type Hub struct {
 	// 供 /healthz 的 upstream_429_rate_per_min（「最近一分钟到底有多少次限流」）。
 	Recent429 rate429Ring
 
-	// #22 两级队列：highWaiting 统计「某账号 × 某池」当前处于 Reserve 领槽区间的
+	// 两级队列：highWaiting 统计「某账号 × 某池」当前处于 Reserve 领槽区间的
 	// 非流式（高优先级）请求数。流式（低优先级）在领槽前会限时等它清零，从而让
 	// 短促的工具调用（非流式）在文本池里优先于长回答（流式）拿到节拍槽位。
 	// 只用 h.mu 保护（短临界区，不嵌套），与 Pacer() 共享同一把锁互斥安全。
 	highWaiting map[string]int
 
-	// #24 负载画像遥测：近 120s 模态分布 + 流式比，供接入方自动检测匹配情景。
+	// 负载画像遥测：近 120s 模态分布 + 流式比，供接入方自动检测匹配情景。
 	load loadWindow
 
-	// #24 AutoScenario 冷却防抖：最近一次自动切换情景的时间 + 当时的目标情景。
+	// AutoScenario 冷却防抖：最近一次自动切换情景的时间 + 当时的目标情景。
 	// 同一情景 60s 内不重复切（避免在两个情景边界来回抖动）。
 	autoMu          sync.Mutex
 	lastAutoSwitch  time.Time
@@ -238,7 +238,7 @@ func (r *arrivalRing) TotalCount() int64 {
 }
 
 // ---------------------------------------------------------------------------
-// 负载画像遥测（#24：接入方自动检测匹配情景的数据来源）
+// 负载画像遥测
 // ---------------------------------------------------------------------------
 
 // loadWindow 用两个 60s 桶累计近 120s 的请求模态分布（text/image/video）与流式占比。
@@ -345,7 +345,7 @@ func New(store *config.Store) *Hub {
 		successes:     map[string]int{},
 		reviveAt:      map[string]time.Time{},
 		pendingFactor: map[string]bool{},
-		highWaiting:   map[string]int{}, // #22 两级队列：非流式领槽区间计数
+		highWaiting:   map[string]int{}, // 两级队列：非流式领槽区间计数
 	}
 	h.Metrics.StartedAt = time.Now()
 	h.Reload()
@@ -662,7 +662,7 @@ func (h *Hub) tryRevive(id string) {
 // StartMaintenance 启动后台维护：熔断复活 + 到期绑定清理 + 因子落盘。
 func (h *Hub) StartMaintenance(ctx context.Context) {
 	go func() {
-		// P0-2：维护循环是「挂机无人值守」的关键后台任务，任何一次 panic 都不得让
+		// 维护循环是「挂机无人值守」的关键后台任务，任何一次 panic 都不得让
 		// 它退出（否则 30s 的熔断复活 / 因子落盘全停）。每轮单独 recover。
 		defer func() {
 			if e := recover(); e != nil {
@@ -714,7 +714,7 @@ func (h *Hub) flushFactors() {
 	// 兜底：把统计字段（RateLimited / LastError / 熔断状态等）批量写一次，
 	// 热路径里改这些字段的代码一律走 MutateAccountNoSave，这里统一落盘。
 	h.store.FlushAccounts()
-	// #20 热路径异步落盘：批量写下游密钥（ChargeKey 只改内存）+ 批量追加 usage 日志
+	// 热路径异步落盘：批量写下游密钥（ChargeKey 只改内存）+ 批量追加 usage 日志
 	// （AppendUsage 只入内存缓冲）+ 批量写粘性绑定（Bind 只改内存）。挂机丢 ≤30s 可接受。
 	h.store.FlushKeys()
 	h.store.FlushUsage()
@@ -735,7 +735,7 @@ func (h *Hub) rollDailyBudgets() {
 	}
 }
 
-// maybeAutoScenario 维护循环调用（#24）：AutoScenario 开启时，按实时负载画像推荐
+// maybeAutoScenario 维护循环调用：AutoScenario 开启时，按实时负载画像推荐
 // 最贴合的情景并自动切换，带 60s 冷却防抖（同一目标情景不重复切、避免边界抖动）。
 // 只改全局旋钮 + 热重载，账号级 RPMOverrides 仍优先；控制台可随时关闭 AutoScenario
 // 改回人工选定。
@@ -1096,7 +1096,7 @@ func (h *Hub) InflightTotal() int {
 }
 
 // ---------------------------------------------------------------------------
-// 富健康度观测（P1-4：/healthz 不仅报 ok，还报「网关到底能不能干活」）
+// 富健康度观测
 // ---------------------------------------------------------------------------
 
 // QueueDepth 当前排队的请求总数（所有池的 pacer.Waiting() 之和）。
@@ -1139,7 +1139,7 @@ func (h *Hub) Upstream429RatePerMin() int {
 }
 
 // PoolMaxProjectedWaitMS 取某池所有「启用」账号 pacer 的最大投影等待（毫秒）。
-// #21：供 /healthz 的 text_projected_wait_ms（排队可观测）与上游 429 兜底
+// 供 /healthz 的 text_projected_wait_ms（排队可观测）与上游 429 兜底
 // Retry-After（按池深度算，而非写死 5s）复用。无启用账号或该池无流量则返回 0。
 func (h *Hub) PoolMaxProjectedWaitMS(poolClass string) int64 {
 	max := int64(0)
@@ -1165,7 +1165,7 @@ func (h *Hub) PanicsTotal() int64 {
 
 // Acquire 等待并领取一个发送槽位，返回排队等待时长。
 //
-// lowPriority：#22 两级队列。文本池内「非流式（工具/短调用）= 高优先级、流式（长生成）
+// lowPriority：两级队列。文本池内「非流式（工具/短调用）= 高优先级、流式（长生成）
 // = 低优先级」。开启 TextTwoLevelQueue 且池为 text 时，流式请求（lowPriority=true）在
 // 领槽前会限时等本账号非流式请求的领槽区间（highWaiting）清零，让短促调用优先拿到
 // 节拍槽位；领到的仍是下一个空闲槽（绝不超车已领槽位），RPM 安全节拍不变。
@@ -1182,7 +1182,7 @@ func (h *Hub) Acquire(ctx context.Context, a *config.Account, poolClass string, 
 			return time.Since(started), ctx.Err()
 		}
 	}
-	// #22 两级队列：仅文本池 + 开启开关 + 本请求为低优先级（流式）时，先限时让位。
+	// 两级队列：仅文本池 + 开启开关 + 本请求为低优先级（流式）时，先限时让位。
 	// 轮询 highWaiting[k]==0（尊重 ctx 与剩余预算），避免高优先级（非流式）还在领槽时
 	// 流式请求插队抢占节拍。等待本身计入总排队时长。
 	if lowPriority && s.TextTwoLevelQueue && poolClass == "text" {
@@ -1260,7 +1260,7 @@ func (h *Hub) Acquire(ctx context.Context, a *config.Account, poolClass string, 
 func (h *Hub) OnRateLimited(a *config.Account, poolClass string) {
 	s := h.Settings()
 	h.Metrics.Upstream429.Add(1)
-	h.Recent429.record() // P1-4：富健康度——最近 60s 429 速率
+	h.Recent429.record() // 富健康度——最近 60s 429 速率
 
 	floor := s.MinLearnedFactor
 	if floor <= 0 {
@@ -1302,7 +1302,7 @@ func (h *Hub) OnRateLimited(a *config.Account, poolClass string) {
 		}
 		return true
 	})
-	// P1-3/P2-4：429 高频路径只收紧受影响的「单个账号 × 单个池」节拍器，
+	// 429 高频路径只收紧受影响的「单个账号 × 单个池」节拍器，
 	// 不再做全量快照 Reload()（O(账号×池) 重新初始化，429 风暴时拖慢换号循环）。
 	// 账号集 / 设置在此路径不会变，仅这一个池因子变了，单 pacer reload 即可覆盖。
 	h.ReloadPacer(a, poolClass)
@@ -1392,7 +1392,7 @@ func (h *Hub) NoteSuccess(a *config.Account) {
 		return true
 	})
 	h.Metrics.RequestsOK.Add(1)
-	// P1-4：全局最近成功时间戳（/healthz last_success_age_ms）。
+	// 全局最近成功时间戳（/healthz last_success_age_ms）。
 	h.Metrics.LastSuccessNS.Store(time.Now().UnixNano())
 }
 

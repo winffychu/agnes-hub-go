@@ -16,15 +16,15 @@ import (
 
 // 已知模型清单（内置种子）。
 //
-// 2026-11-07 起模型清单改为**动态配置驱动**（settings.json 的 free_models /
-// dead_models，控制台或手改即可维护，无需改代码重编译）。这里的 var 表只是：
+// 模型清单为**动态配置驱动**（settings.json 的 free_models / dead_models，
+// 控制台或手改即可维护，无需改代码重编译）。这里的 var 表只是：
 //  1. settings 缺省时的初始种子；
 //  2. 兼容旧调用方的最小静态能力（模态判定仍需要一张"名字→模态"映射）。
 //
 // 免费口径（官方文档核对）：所有 -flash 后缀模型免费；Pro 系与 agnes-video-2.5
 // 付费——运行时以 settings.FreeModels 为准，本表不承载"是否免费"语义。
-// 死模型（2026-11-07 实测下线）：1.5/2.0 文本、2.5-pro、video-v2.0 已从
-// 默认清单与别名**彻底剔除**，运行时以 settings.DeadModels 为准。
+// 死模型（实测下线）：1.5/2.0 文本、2.5-pro、video-v2.0 已从默认清单与
+// 别名剔除，运行时以 settings.DeadModels 为准。
 var (
 	TextModels = map[string]bool{
 		"agnes-2.5-flash": true, "agnes-2.0-flash": true, "agnes-1.5-flash": true,
@@ -61,7 +61,7 @@ func IsDead(model string, dead []string) bool {
 }
 
 // IsFree 判定模型是否免费（settings.FreeModels 动态配置，不硬编码）。
-// 空配置时按官方口径启发式：-flash 后缀免费（与 2026-11-07 文档核对一致）。
+// 空配置时按官方口径启发式：-flash 后缀免费。
 func IsFree(model string, free []string) bool {
 	for _, m := range free {
 		if m == model {

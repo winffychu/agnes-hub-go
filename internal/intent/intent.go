@@ -144,27 +144,19 @@ var (
 		"size", "response_format", "quality", "style", "seed", "negative_prompt",
 		"image", "images", "image_url", "strength", "aspect_ratio", "width", "height",
 		"prompt_extend", "watermark",
-		// 2026-11-08：兼容 reveric/新客户端的两种形态——
-		//   1) ratio（图像档位+比例形式，实测 size:1K+ratio:16:9 → 200，
-		//      与视频路径不同，图像的 ratio 是上游合法字段）
-		//   2) extra_body（嵌套对象，上游实测认 extra_body.image / response_format；
-		//      BuildImageBody 会把 extra_body 整体透传——OpenAI SDK 风格客户端
-		//      与 reveric 都用这个容器装非标参数）
-		//   3) return_base64（官方 U5 合法顶层字段，此前未透传 → 客户端要
-		//      b64 输出被静默丢弃）
+		// ratio（档位+比例形式，上游合法）、extra_body（官方要求嵌套形态的
+		// 非标参数容器，整体透传）、return_base64（b64 输出）。
 		"ratio", "extra_body", "return_base64",
 	}
-	// 视频字段白名单（2026-11-08 对照上游实测定案，第二轮修订）：
-	//   - 合法：seconds/mode/size/aspect_ratio（6 档，禁 auto）/first_frame/
-	//     last_frame/images/audios（keyframe 用 first/last_frame，reference 用
-	//     images/audios）/image/image_url/seed/negative_prompt/resolution/extra_body
-	//   - **禁止清单（U8 + 实测全部 400，白名单刻意不含）**：width/height/
-	//     num_frames/frame_rate（"forbidden field"，2.5 契约用 size+seconds 表达）、
-	//     quality/num_inference_steps、duration（"not an allowed request field"）、
-	//     ratio/videos/keyframe/prompt_extend
-	//     —— OpenAI 形客户端的这些字段由 openaiVideoToAgnes 转换后再进白名单
-	//   - aspect_ratio=auto：上游 400，转换器负责消除（按模型档位映射）
-	//   - extra_body：SDK 机制（U8），解包合并到顶层（见 BuildVideoBody）
+	// 视频字段白名单（对照上游实测与官方文档 U8）：
+	//   - 合法：seconds/mode/size/aspect_ratio（禁 auto）/first_frame/last_frame/
+	//     images/audios（keyframe 用 first/last_frame，reference 用 images/audios）/
+	//     image/image_url/seed/negative_prompt/resolution/extra_body
+	//   - 禁止（实测 400，白名单刻意不含）：width/height/num_frames/frame_rate
+	//     （2.5 契约用 size+seconds 表达）、quality/num_inference_steps、
+	//     duration、ratio、videos、keyframe、prompt_extend——OpenAI 形客户端的
+	//     这些字段由 openaiVideoToAgnes 转换后再进白名单
+	//   - aspect_ratio=auto：上游 400，转换器负责消除
 	VideoFieldWhitelist = []string{
 		"seconds", "mode", "size", "aspect_ratio",
 		"seed", "negative_prompt", "resolution",
@@ -702,7 +694,7 @@ func ChooseModel(declared, preference []string) string {
 
 var tierOnly = regexp.MustCompile(`(?i)^\s*([1-4])\s*k\s*$`)
 
-// normalizeSize 图像档位归一化。边界（owner 裁定：只兼容大小写，防过度）：
+// normalizeSize 图像档位归一化。边界（只兼容大小写，防过度）：
 //   - 只接受「数字 + k/K」且数字在 1-4 的输入做大小写归一（1k→1K）；
 //   - 2k→2K 这类**同数字大小写变换是同一档位**，属于本函数职责；
 //   - 绝不做：像素→档位换算（1024x768 原样透传，上游官方声明会归一化）、
@@ -756,7 +748,7 @@ func BuildImageBody(res Result, model string, cfg Config, source map[string]any)
 	// extra_body：图像侧官方语义 = 请求 JSON 中的真实嵌套对象（U5「请勿在请求体
 	// 顶层放置 response_format」「图生图需在 extra_body.image 提供输入图像」）。
 	// 与视频侧（SDK 客户端机制）不同——图像的 extra_body 上游就要求嵌套形态，
-	// **必须整体透传不解包**（上轮已加白名单，此处保持）。
+	// **必须整体透传不解包**。
 	for _, k := range ImageFieldWhitelist {
 		if v, ok := source[k]; ok && hasValue(v) {
 			out[k] = v
@@ -789,8 +781,7 @@ func BuildVideoBody(res Result, model string, cfg Config, source map[string]any)
 	out := map[string]any{"model": model, "prompt": prompt}
 	// 双协议入站：OpenAI 官方视频 API 形态（input[]/instructions/
 	// input_reference/duration）→ Agnes 私有形。Agnes 私有形请求零改动直通。
-	// 转换说明记录在 notes，供响应元信息与日志追溯（可回滚：删除此调用即
-	// 回到仅私有形支持）。
+	// 转换说明记录在 notes，随响应元信息对外可见（可追溯）。
 	if converted, notes := openaiVideoToAgnes(source); len(notes) > 0 {
 		source = converted
 		res.ConversionNotes = notes

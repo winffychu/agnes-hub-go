@@ -105,7 +105,7 @@ func main() {
 	// 应用完更新后要真的退出：光置一个标志位没人看，
 	// 必须有人把它翻译成取消信号，进程才会走到优雅关闭。
 	go func() {
-		// P0-2：自更新轮询 goroutine 若 panic 会丢失「自动重启」能力（挂机下影响升级），
+		// 自更新轮询 goroutine 若 panic 会丢失「自动重启」能力（挂机下影响升级），
 		// 加 recover 保护，单轮 panic 不退出循环。
 		defer func() {
 			if e := recover(); e != nil {
@@ -155,7 +155,7 @@ func main() {
 		IdleTimeout: 120 * time.Second,
 	}
 	// 关闭服务端 keep-alive：每个请求走独立 TCP 连接（响应带 Connection: close）。
-	// 根因（2026-10-12 用户 A/B 实测证实）：网关进程一旦重启 / 热更，所有已建立的
+	// 根因（线上 A/B 实测证实）：网关进程一旦重启 / 热更，所有已建立的
 	// keep-alive 连接被服务端掐断，但客户端（WorkBuddy）连接池仍认为这些连接存活，
 	// 下一轮请求会把数据写进「半死连接」黑洞，触发 TCP 重传超时（十几分钟），
 	// 表现为「思考中 / 生成回复中」长时间无进展、且网关侧 accepted / pending 全为 0。
@@ -198,7 +198,7 @@ func main() {
 
 	go func() {
 		<-ctx.Done()
-		// P1-2 优雅停机：先等在途（relay 层）请求排空再关 server，避免长视频任务 /
+		// 优雅停机：先等在途（relay 层）请求排空再关 server，避免长视频任务 /
 		// 流式长回答被硬切。InflightTotal()==0 即排空；30s 宽限兜底（挂机的任务
 		// 不会因一次正常停机而白干，但也不会让进程永远退不出）。
 		deadline := time.Now().Add(30 * time.Second)

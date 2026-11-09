@@ -219,7 +219,7 @@ func BuildClient() *http.Client {
 	return BuildClientForAccounts(0)
 }
 
-// BuildClientForAccounts 按当前账号数自适应连接池（P2-3）。
+// BuildClientForAccounts 按当前账号数自适应连接池。
 //
 // 每个账号通常指向独立的上游 host，连接池 idle 上限按账号数线性放宽，
 // 避免多账号并发时 idle 连接被回收重建（TLS 握手成本）；单 host 上限
@@ -299,7 +299,7 @@ func UpstreamURLForRoot(root, path string) string {
 // ---------------------------------------------------------------------------
 
 // relayRand 是「随机选择」站点模式用的随机数源（仅用于选站，无需加密强度）。
-// rand.Rand 非并发安全——并发请求同时 Intn 会数据竞争（审计 P1-5），加锁串行化。
+// rand.Rand 非并发安全——并发请求同时 Intn 会数据竞争，加锁串行化。
 var (
 	relayRandMu   sync.Mutex
 	relayRand     = rand.New(rand.NewSource(time.Now().UnixNano()))
@@ -415,6 +415,8 @@ type Options struct {
 	// Idempotent 声明该请求可否安全重试。GET 轮询与纯文本对话为 true，
 	// 生图 / 视频提交为 false（重试会造成重复扣费与重复建任务）。
 	Idempotent bool
+	// RequestID 网关侧请求 ID，透传给上游（X-Request-Id），便于三方联合排障。
+	RequestID string
 	// Stream 标记这是一次流式（SSE）请求。为 true 时，请求超时时钟改由
 	// 「空闲看门狗」驱动（只要上游还在持续吐字节就不断开，仅在连续
 	// StreamIdleTimeoutMS 无任何新字节时才断开），避免长文本回答被固定的
@@ -508,7 +510,7 @@ func doOnce(ctx context.Context, h *hub.Hub, client *http.Client, opts Options) 
 	if retryMax < 0 {
 		retryMax = 0
 	}
-	// #25：429（限流/达到最大额度）走一条独立的「网关内长预算」重试路径。
+	// 429（限流/达到最大额度）走一条独立的「网关内长预算」重试路径。
 	// 它是「受理前拒绝、重试安全」，网关会换账号 + 重新排队 + 感知 Retry-After 退避地
 	// 自动重试，直到成功或耗尽预算，期间不透传 429 给客户端，从而不中断在途任务。
 	// RateLimitRetryMax=0 沿用 RetryMax；RateLimitWaitBudgetMS=0 表示不限等待预算。
@@ -543,7 +545,7 @@ func doOnce(ctx context.Context, h *hub.Hub, client *http.Client, opts Options) 
 	var lastSoftKind respKind
 	// 记录一次到达，供控制台「到达密度 vs 节拍」观测。
 	h.Arrivals.Add()
-	// #24：记录一次负载画像（模态 + 是否流式），供接入方自动检测匹配情景。
+	// 记录一次负载画像（模态 + 是否流式），供接入方自动检测匹配情景。
 	h.NoteRequest(opts.PoolClass, opts.Stream)
 
 	for attempt := 0; ; attempt++ {
@@ -564,7 +566,7 @@ func doOnce(ctx context.Context, h *hub.Hub, client *http.Client, opts Options) 
 		}
 		account := picked.Account
 
-		wait, err := h.Acquire(ctx, account, opts.PoolClass, opts.Stream) // #22：流式=低优先级让位非流式
+		wait, err := h.Acquire(ctx, account, opts.PoolClass, opts.Stream) // 流式=低优先级让位非流式
 		if err != nil {
 			return nil, err
 		}
@@ -644,7 +646,7 @@ func doOnce(ctx context.Context, h *hub.Hub, client *http.Client, opts Options) 
 		exclude[account.ID] = true
 		lastFail = result
 
-		// #25：429（限流/达到最大额度）走「网关内长预算自动重试」——换账号 + 重新排队 +
+		// 429（限流/达到最大额度）走「网关内长预算自动重试」——换账号 + 重新排队 +
 		// 感知 Retry-After 退避，直到成功或预算耗尽，期间不透传 429 给客户端，
 		// 从而不中断客户端在途任务。预算耗尽才把最后一次 429 透传（由 server 补 Retry-After）。
 		if result.Status == http.StatusTooManyRequests {
@@ -712,7 +714,7 @@ func attemptOnce(ctx context.Context, h *hub.Hub, client *http.Client, account *
 		idleMS = 60000 // 默认 60s 空闲才断开
 	}
 
-	// ---- #29 效率增强（内容零改动，仅改传输/缓存提示）----
+	// ---- 效率增强（内容零改动，仅改传输/缓存提示）----
 	// P0：Anthropic 路径注入 cache_control，让上游对反复出现的静态前缀
 	//     （system + tools）做前缀缓存，避免每轮重算 prefill。
 	// P1：对上传请求体做 gzip，削减 ~500KB 的网关→上游带宽
@@ -788,6 +790,9 @@ func attemptOnce(ctx context.Context, h *hub.Hub, client *http.Client, account *
 		for k, values := range ClientHeaders(account, opts.ExtraHeaders, opts.Anthropic) {
 			req.Header[k] = values
 		}
+		if opts.RequestID != "" {
+			req.Header.Set("X-Request-Id", opts.RequestID)
+		}
 		// P1：已对请求体做 gzip 压缩，声明编码并让 Go 按压缩后字节数自动设 Content-Length。
 		if gzipEncode {
 			req.Header.Set("Content-Encoding", "gzip")
@@ -857,10 +862,9 @@ func attemptOnce(ctx context.Context, h *hub.Hub, client *http.Client, account *
 			if wd != nil {
 				wd.stop()
 			}
-			// v1.0.39 防护：个别上游站点把「上下文超长」误报成 401 "Invalid token"
-			// （直连同请求则如实报 400 ContextWindowExceededError）。若在此走
-			// OnAuthFailure，会把健康账号熔断禁用 30 分钟；会话上下文一大就轮番
-			// 误杀，最终 no_capacity → 客户端干等（2026-10-12 渐进卡死根因之一）。
+			// 个别上游站点把「上下文超长」误报成 401 "Invalid token"（直连同请求
+			// 则如实报 400 ContextWindowExceededError）。若在此走 OnAuthFailure
+			// 会把健康账号熔断 30 分钟，上下文一大就轮番误杀直至 no_capacity。
 			// 识别到超长信号：改写成 400 直接交还客户端，账号不熔断、不换站
 			//（换站解决不了超长，只会把同样的 401 在别的账号上再犯一遍）。
 			if isContextOverflowError(raw) {
@@ -1131,7 +1135,7 @@ func errorBody(message, etype string) []byte {
 	return buf
 }
 
-// gzipBytes 把请求体压缩为 gzip（#29 P1）。失败返回 (nil, false)，调用方应原样发送。
+// gzipBytes 把请求体压缩为 gzip。失败返回 (nil, false)，调用方应原样发送。
 func gzipBytes(in []byte) ([]byte, bool) {
 	var buf bytes.Buffer
 	gz := gzip.NewWriter(&buf)
@@ -1209,7 +1213,7 @@ func rewriteOverflowBody(raw []byte) []byte {
 	return body
 }
 
-// addAnthropicCacheControl 在 Anthropic 风格请求体上注入前缀缓存断点（#29 P0）：
+// addAnthropicCacheControl 在 Anthropic 风格请求体上注入前缀缓存断点：
 // 把顶层 system 标为可缓存块（ephemeral），使上游对重复出现的巨大静态前缀
 // （system + tools）不再每轮重算 prefill。仅当上游兼容 Anthropic cache_control
 // 时才有收益；不兼容时该字段被忽略，内容不受影响。agnes 主路径的 system 位于

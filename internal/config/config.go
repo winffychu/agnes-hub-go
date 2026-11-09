@@ -329,16 +329,6 @@ type ImageJob struct {
 	RequestID string  `json:"request_id"`
 }
 
-// ChatLog 是聊天对话记录（用户问题 + 助手回复），持久化于 chat_logs.json。
-type ChatLog struct {
-	ID        string  `json:"id"`
-	Model     string  `json:"model"`
-	Prompt    string  `json:"prompt"`
-	Reply     string  `json:"reply"`
-	Status    string  `json:"status"`
-	CreatedAt float64 `json:"created_at"`
-}
-
 // AutoIntentSettings 是 agnes-auto 的判定与适配配置。
 type AutoIntentSettings struct {
 	ContentScan      bool                `json:"content_scan"`
@@ -375,10 +365,9 @@ type Settings struct {
 	// cn_only / com_only 模式不换站，401/403 直接熔断该账号。
 	RegionPriority       string             `json:"region_priority,omitempty"`
 	ModelAliases         map[string]string  `json:"model_aliases"`
-	// FreeModels 官方确认的免费模型清单（动态配置，不硬编码）。
-	// 依据 2026-11-07 官方文档核对：所有 -flash 后缀模型免费，Pro 系与
-	// agnes-video-2.5 付费。上游上线新 flash 模型时，控制台/手改 settings.json
-	// 即可追加，无需改代码重新编译。
+	// FreeModels 免费模型清单（动态配置）：官方口径为 -flash 后缀免费、
+	// Pro 系与 agnes-video-2.5 付费。上游上线新免费模型时，控制台/手改
+	// settings.json 即可追加，无需改代码重新编译。
 	FreeModels []string `json:"free_models"`
 	// DeadModels 实测失效/已下线的模型（动态配置）。命中该清单的模型：
 	// 不进入 auto 偏好、不作为别名目标、/v1/models 目录中标记 dead。
@@ -412,7 +401,7 @@ type Settings struct {
 	// 仅当连续超过该时长【没有任何新字节】时才判定为卡死并断开。
 	// 非流式请求仍用 RequestTimeoutMS 的整请求墙钟超时，二者互不影响。
 	// 默认 600000（10min）；填 0/负 由 newStreamWatchdog 兜底为 60s。慢推理模型必须给足，
-	// 否则网关会在「上游思考 >阈值秒才吐首 token」时把流掐断（2026-10-12 实证卡死根因）。
+	// 否则网关会在「上游思考超过阈值秒才吐首 token」时把流掐断（线上卡死根因）。
 	StreamIdleTimeoutMS int    `json:"stream_idle_timeout_ms"`
 	// UsageLogMaxLines 是 usage.jsonl 保留的最大行数（按最近 N 行滚动截断，
 	// 防止长期挂机把磁盘写满）。默认 20000；填 0 表示不限。
@@ -465,24 +454,22 @@ type Settings struct {
 	// （Content-Encoding: gzip），削减网关→上游的带宽（WorkBuddy 单请求体常达
 	// ~500KB，gzip 可压到 1/5~1/8）。
 	//
-	// ⚠️ 默认 false（2026-10-12 实测定案，勿再默认开启）：上游 agnes 对「大体积
-	// gzip 请求体」解压失败时返回误导性 401 "Invalid token"（同请求直连、不压缩
-	// 则如实报 400 ContextWindowExceededError）。401 会触发 OnAuthFailure 把账号
-	// 熔断禁用 30 分钟，轮询不断撞上即把账号池抽干 → no_capacity → 客户端干等，
-	// 表现为「会话开头能用、上下文变大后逐渐卡死、重启才恢复」。小请求 gzip 正常，
-	// 所以症状随上下文增长渐进出现。带宽收益远不抵稳定性代价；确需开启请先对
+	// 默认 false：上游对大体积 gzip 请求体解压失败时会返回误导性 401 "Invalid
+	// token"（同请求直连、不压缩则如实报 400 ContextWindowExceededError），
+	// 401 触发账号熔断 30 分钟，轮询撞上即把账号池抽干。小请求 gzip 正常，
+	// 症状随上下文增长渐进出现。带宽收益远不抵稳定性代价；确需开启请先对
 	// 目标上游做 ≥2MB 请求体的压缩回归测试。
 	UpstreamRequestGzip bool `json:"upstream_request_gzip"`
 	// AnthropicPromptCache 开启后，网关在 Anthropic 风格（/v1/messages）请求体的
 	// 顶层 system 块注入 cache_control:{type:"ephemeral"}，让上游对反复出现的
 	// 巨大静态前缀（system + tools）做前缀缓存，避免每轮重算 prefill。仅当上游
-	// 兼容 Anthropic 前缀缓存时生效；不兼容时该字段被忽略，内容不受影响（见 #29）。
+	// 兼容 Anthropic 前缀缓存时生效；不兼容时该字段被忽略，内容不受影响。
 	AnthropicPromptCache bool `json:"anthropic_prompt_cache"`
 	// StripContentPolicy 开启后，网关在把请求体发给上游前，剥离 WorkBuddy 客户端
 	// 注入的 <content_policy> 段（JSON 字符串感知的字节替换）。原本默认 true 是为省
-	// token；2026-10-12 起默认 false：客户端报「渐变卡死」排障期间，把一切请求体改写
-	// 全部摘除以收敛变量（gzip 已同批默认关闭）。确认稳定后如需重开，必须先对大体积、
-	// 多轮、含多个标签字面量的请求体做回归测试（v1.0.26 曾实证跨字符串误配对打坏 JSON）。
+	// token；默认 false：请求体改写（本字段与 gzip）历史上曾引发稳定性问题而同批
+	// 摘除以收敛变量。如需重开，必须先对大体积、多轮、含多个标签字面量的请求体做
+	// 回归测试（历史版本曾实证跨字符串误配对打坏 JSON）。
 	StripContentPolicy bool `json:"strip_content_policy"`
 	// RoutingMode 决定「有日预算的用量型账号（如 Cloudflare）」与「无天花板的速率型账号
 	// （如 agnes）」混挂时谁先被吃：
@@ -492,8 +479,6 @@ type Settings struct {
 	//   - "balanced" 不做偏好，纯按 priority→区域→投影等待→在途 排（与旧行为一致）。
 	// 无论哪种，「预算耗尽 → 当天自动从候选池剔除、次日自动回池」的不变量都成立。
 	RoutingMode string `json:"routing_mode"`
-	ChatPasswordHash     string `json:"chat_password_hash,omitempty"`
-	ChatPasswordSalt     string `json:"chat_password_salt,omitempty"`
 }
 
 // RoutingModes 是 RoutingMode 的合法取值。
@@ -534,8 +519,7 @@ func DefaultSettings() Settings {
 			},
 		},
 		ModelManifestDefault: ModelManifest{
-			// 2026-11-07 实测校准：agnes-2.0-flash 已上游下线（500 get_channel_failed），
-			// 从默认清单移除，避免 auto 偏好选到死模型烧重试预算。
+			// 默认清单只含实测可用的模型；已下线模型由 dead_models 动态剔除。
 			Text:  []string{"agnes-3.0-flash", "agnes-2.5-flash"},
 			Image: []string{"agnes-image-2.5-flash", "agnes-image-2.1-flash"},
 			Video: []string{"agnes-video-2.5-flash", "agnes-video-2.5"},
@@ -559,7 +543,7 @@ func DefaultSettings() Settings {
 		RegionPriority:      "cn_first",
 		RequestTimeoutMS:    30000, // 默认 30s 上游请求超时
 		FreeTextRPM:         10,    // agnes 免费档文本池标称 RPM（可配置）
-		StreamIdleTimeoutMS: 600000, // 流式空闲看门狗：连续 10min 无新字节才断开（2026-10-12 由 60s 上调——推理模型难任务思考常 >90s，60s 会在中途把流掐断致客户端卡死）
+		StreamIdleTimeoutMS: 600000, // 流式空闲看门狗：连续 10min 无新字节才断开（推理模型思考可远超 90s，短阈值会在中途掐断流）
 		UsageLogMaxLines:    20000,  // usage.jsonl 滚动保留最大行数
 		UsageRequestLogBytes: 512,   // 日志「用户完整请求」保留字节上限
 		RateLimitRetryMax:     6,      // 429 网关内部自动重试次数上限（换账号+重新排队）
@@ -570,12 +554,9 @@ func DefaultSettings() Settings {
 		SoftFailRetryMax: 2,
 		// 流式断流 / error 帧自动重连续写，默认开（不让客户端停）
 		StreamAutoResume: true,
-		// #29 反悔（2026-10-12 实测）：gzip 默认关闭——上游对大体积 gzip 请求体
-		// 返回误导性 401，触发账号熔断级联（详见字段注释）。要开先做 ≥2MB 回归测试。
+		// gzip 与请求体改写默认全关（上游兼容性问题会级联熔断账号，详见字段注释）。
 		UpstreamRequestGzip: false,
-		// 默认不剥离：2026-10-12 排障「渐变卡死」，与 gzip 同批摘除一切请求体改写以
-		// 收敛变量。确认稳定后如需重开（省 token），先做大体积/多标签字面量回归测试。
-		StripContentPolicy: false,
+		StripContentPolicy:  false,
 		// 混挂「用量型（CF 有日预算）」与「速率型（agnles 无天花板）」时：agnles 扛主力、
 		// CF 兜底且烧光自动出局。这是最稳的挂机默认。
 		RoutingMode: "rate_first",
@@ -665,7 +646,7 @@ func ScenarioPresets() []ScenarioPreset {
 			RateLimitRetryMax: 10, RateLimitWaitBudget: 300000, // 挂机批量最高预算：多等少错，5 分钟自动顶满
 		},
 		{
-			// #23：专为「接入 WorkBuddy 写代码 / 自动工具调用 / 方案生成，偶尔多任务并发」
+			// 专为「接入编码助手写代码 / 自动工具调用 / 方案生成，偶尔多任务并发」
 			// 定制的推荐一键预设。相比 multi 更贴文本负载：文本满血、工具短调用（非流式）
 			// 走两级队列优先出队、多任务深队列吃满 8 号、生图/视频让路、长方案流式更耐断流。
 			Name: "workbuddy", Desc: "WorkBuddy 写代码推荐：文本为主、工具短调用优先（两级队列）、多任务深队列吃满、生图/视频让路、长方案流式不断流",
@@ -788,11 +769,10 @@ type Store struct {
 	Bindings  map[string]Binding
 	Jobs      map[string]*VideoJob
 	ImageJobs map[string]*ImageJob
-	ChatLogs  map[string]*ChatLog
 	// usageLineCount 是 usage.jsonl 的累计行数（进程内估计，启动时从文件读一次，
-	// 之后按追加行数增长）。P1-1 用它触发滚动截断，避免长期挂机把磁盘写满。
+	// 之后按追加行数增长）。维护循环用它触发滚动截断，避免长期挂机把磁盘写满。
 	usageLineCount atomic.Int64
-	// #20 热路径异步落盘：
+	// 热路径异步落盘：
 	//   keysDirty 由 ChargeKey 在改内存后打标，维护循环 FlushKeys 批量写盘（避免每请求
 	//   全量 saveKeysLocked）；keys/accounts 的写锁 s.mu 已覆盖 Keys 字段，故此处无需独立锁。
 	//   usageBuf/usageMu 收集待落盘的 usage 记录，FlushUsage 批量追加（一次 Open/Write 多行
@@ -800,7 +780,7 @@ type Store struct {
 	keysDirty atomic.Bool
 	usageMu   sync.Mutex
 	usageBuf  []map[string]any
-	// #20 补漏：bindingsDirty 由热路径 Bind（Pick 每个粘性会话请求都会调）打标，
+	// bindingsDirty 由热路径 Bind（Pick 每个粘性会话请求都会调）打标，
 	// 维护循环 FlushBindings 批量写盘，避免每请求同步 saveBindingsLocked。
 	// 与 keysDirty 一样走 s.mu 保护（s.Bindings 在 s.mu 下），无需独立锁。
 	bindingsDirty atomic.Bool
@@ -813,7 +793,6 @@ func NewStore(dir string) (*Store, error) {
 		Settings: DefaultSettings(),
 		Bindings: map[string]Binding{},
 		Jobs:     map[string]*VideoJob{},
-		ChatLogs: map[string]*ChatLog{},
 	}
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return nil, err
@@ -875,14 +854,10 @@ func (s *Store) load() error {
 	if err := readJSON(s.path("image_jobs.json"), &s.ImageJobs); err != nil {
 		return err
 	}
-	s.ChatLogs = map[string]*ChatLog{}
-	if err := readJSON(s.path("chat_logs.json"), &s.ChatLogs); err != nil {
-		return err
-	}
 	for _, a := range s.Accounts {
 		normalizeAccount(a, s.Settings)
 	}
-	// P1-1：启动时从现有 usage.jsonl 读一次行数作为累计基线，
+	// 启动时从现有 usage.jsonl 读一次行数作为累计基线，
 	// 之后每次追加递增；超过阈值时滚动截断，防止挂机写满磁盘。
 	s.usageLineCount.Store(countLines(s.path("usage.jsonl")))
 	return nil
@@ -1520,7 +1495,7 @@ func (s *Store) MutateKey(value string, fn func(*DownstreamKey) bool) bool {
 	return false
 }
 
-// FlushKeys 批量落盘下游密钥（#20：维护循环周期调用）。
+// FlushKeys 批量落盘下游密钥（维护循环周期调用）。
 // 仅当 ChargeKey 在内存改过（keysDirty=true）才真正写一次盘，把「每请求全量
 // saveKeysLocked」降为「30s 一次」；与 FlushAccounts 的兜底写盘同口径。
 func (s *Store) FlushKeys() {
@@ -1580,7 +1555,7 @@ func (s *Store) QuotaExceeded(k *DownstreamKey) string {
 }
 
 // ChargeKey 记账（按天滚动）。tokens 为该次请求消耗的 token 总量（解析不到则为 0）。
-// #20：热路径不再同步全量落盘（原 saveKeysLocked 每请求一次 Open/Write/Close），
+// 热路径不同步全量落盘（原实现每请求一次 Open/Write/Close），
 // 改为内存累加 + 标 keysDirty，由维护循环 FlushKeys 周期批量写盘。
 func (s *Store) ChargeKey(value string, tokens int64) {
 	s.mu.Lock()
@@ -1606,7 +1581,7 @@ func (s *Store) ChargeKey(value string, tokens int64) {
 // ---- 粘性绑定 ----
 
 // Bind 写入绑定。
-// #20 补漏：热路径（Pick 每个粘性会话请求都会调）不再同步 saveBindingsLocked，
+// 热路径（Pick 每个粘性会话请求都会调）不同步 saveBindingsLocked，
 // 改为内存写 + 标 bindingsDirty，由维护循环 FlushBindings 30s 批量落盘。
 func (s *Store) Bind(sessionKey, accountID string) {
 	if sessionKey == "" {
@@ -1622,7 +1597,7 @@ func (s *Store) Bind(sessionKey, accountID string) {
 	s.bindingsDirty.Store(true)
 }
 
-// FlushBindings 批量落盘粘性绑定（#20 补漏：维护循环周期调用）。
+// FlushBindings 批量落盘粘性绑定（维护循环周期调用）。
 // 仅当热路径 Bind 改过（bindingsDirty=true）才真正写一次盘；与 FlushKeys 同口径。
 func (s *Store) FlushBindings() {
 	if !s.bindingsDirty.CompareAndSwap(true, false) {
@@ -1849,69 +1824,9 @@ func (s *Store) ImageJobsSnapshot() []*ImageJob {
 
 func (s *Store) saveImageJobsLocked() error { return writeJSON(s.path("image_jobs.json"), s.ImageJobs) }
 
-// ---- 聊天记录 ----
-
-// AddChatLog 追加一条聊天对话记录并落盘。
-func (s *Store) AddChatLog(log *ChatLog) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.ChatLogs == nil {
-		s.ChatLogs = map[string]*ChatLog{}
-	}
-	s.ChatLogs[log.ID] = log
-	_ = s.saveChatLogsLocked()
-}
-
-// DeleteChatLog 删除单条聊天记录。
-func (s *Store) DeleteChatLog(id string) bool {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if _, ok := s.ChatLogs[id]; !ok {
-		return false
-	}
-	delete(s.ChatLogs, id)
-	_ = s.saveChatLogsLocked()
-	return true
-}
-
-// ClearChatLogs 清空全部聊天记录。
-func (s *Store) ClearChatLogs() {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.ChatLogs = map[string]*ChatLog{}
-	_ = s.saveChatLogsLocked()
-}
-
-// ChatLogByID 取单条聊天记录。
-func (s *Store) ChatLogByID(id string) (*ChatLog, bool) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	j, ok := s.ChatLogs[id]
-	if !ok {
-		return nil, false
-	}
-	cp := *j
-	return &cp, true
-}
-
-// ChatLogsSnapshot 返回全部聊天记录（按创建时间倒序）。
-func (s *Store) ChatLogsSnapshot() []*ChatLog {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	out := make([]*ChatLog, 0, len(s.ChatLogs))
-	for _, j := range s.ChatLogs {
-		cp := *j
-		out = append(out, &cp)
-	}
-	sort.Slice(out, func(i, j int) bool { return out[i].CreatedAt > out[j].CreatedAt })
-	return out
-}
-
-func (s *Store) saveChatLogsLocked() error { return writeJSON(s.path("chat_logs.json"), s.ChatLogs) }
-
 // ---- 用量日志 ----
 
-// AppendUsage 记录一行 usage（#20：热路径不再每请求 Open/Write/Close）。
+// AppendUsage 记录一行 usage（热路径不再每请求 Open/Write/Close）。
 // 改为入内存缓冲 usageBuf，由维护循环 FlushUsage 批量落盘（一次 Open/Write 多行
 // 一次 Close）。usageLineCount 仍按记录数原子自增，用于触发滚动截断。
 func (s *Store) AppendUsage(record map[string]any) {
@@ -1927,7 +1842,7 @@ func (s *Store) AppendUsage(record map[string]any) {
 	s.usageLineCount.Add(1)
 }
 
-// FlushUsage 批量把 usageBuf 里的记录一次性追加到 usage.jsonl（#20：维护循环周期调用）。
+// FlushUsage 批量把 usageBuf 里的记录一次性追加到 usage.jsonl。
 // 一次 Open/Write 多行 + 一次 Close，把「每请求一次磁盘往返」降为「30s 一次批量写」。
 // 与 429 不写盘同口径：挂机期间若进程被杀，最多丢最近一个 flush 周期（≤30s）的日志。
 func (s *Store) FlushUsage() {
@@ -1962,7 +1877,7 @@ func (s *Store) FlushUsage() {
 	}
 	_ = f.Close()
 
-	// 批量落盘完成后，基于磁盘态做一次截断（P1-1 滚动日志防磁盘写满）。
+	// 批量落盘完成后，基于磁盘态做一次截断。
 	maxLines := s.Settings.UsageLogMaxLines
 	if maxLines > 0 && s.usageLineCount.Load()%int64(maxLines) == 0 {
 		s.truncateUsageLog(maxLines)
@@ -2025,7 +1940,7 @@ func (s *Store) TailUsage(n int) []map[string]any {
 	return out
 }
 
-// TailUsageLive 控制台日志页专用（#20 修复）：把「尚未落盘的内存缓冲」也算进最近
+// TailUsageLive 控制台日志页专用：把「尚未落盘的内存缓冲」也算进最近
 // 记录，避免异步批量落盘后，刚发完请求的 user_request（用户输入）要等 30s 才在
 // 日志页可见。pending 里的记录尚未上盘，与磁盘内容不重叠；结果倒序（最新在前），
 // 取最近 n 条。
@@ -2087,51 +2002,11 @@ func (s *Store) SetPassword(password string) error {
 	return s.saveSettingsLocked()
 }
 
-// VerifyChatPassword 校验 chat 页面密码。
-func (s *Store) VerifyChatPassword(password string) bool {
-	s.mu.RLock()
-	hash, salt := s.Settings.ChatPasswordHash, s.Settings.ChatPasswordSalt
-	s.mu.RUnlock()
-	if hash == "" {
-		return true // 未设置密码，允许访问
-	}
-	return SubtleEqual(hash, HashPassword(password, salt))
-}
-
-// SetChatPassword 设置/更新 chat 页面密码。空密码表示禁用。
-func (s *Store) SetChatPassword(password string) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if strings.TrimSpace(password) == "" {
-		s.Settings.ChatPasswordHash = ""
-		s.Settings.ChatPasswordSalt = ""
-	} else {
-		salt := randHex(8)
-		s.Settings.ChatPasswordSalt = salt
-		s.Settings.ChatPasswordHash = HashPassword(password, salt)
-	}
-	return s.saveSettingsLocked()
-}
-
 // SessionToken 派生管理员会话令牌（改密即全端失效）。
 func (s *Store) SessionToken() string {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	sum := sha256.Sum256([]byte(s.Settings.AdminPasswordSalt + ":" + s.Settings.AdminPasswordHash + ":agnes-hub-go"))
-	return hex.EncodeToString(sum[:])
-}
-
-// ChatToken 派生 chat 页会话令牌。不落地存储、随每次校验即时派生：
-// 与密码哈希同源（改 chat 密码即全体失效），且从 settings.json 里的
-// 哈希/盐**反推不出**这个值——修复历史缺陷「cookie 值为可预测的字面量，
-// 任何人手写 cookie 即通过认证」。盐里混入 ":chat" 域分隔，与 admin 令牌隔离。
-func (s *Store) ChatToken() string {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	if s.Settings.ChatPasswordHash == "" {
-		return "" // 未设密码时无令牌（chatAuthed 的免密分支处理）
-	}
-	sum := sha256.Sum256([]byte(s.Settings.ChatPasswordSalt + ":" + s.Settings.ChatPasswordHash + ":chat"))
 	return hex.EncodeToString(sum[:])
 }
 

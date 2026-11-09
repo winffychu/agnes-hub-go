@@ -257,7 +257,6 @@ function renderShell(){
         <div class="muted" id="subline">加载中…</div>
       </div>
       <div class="row">
-        <a class="sm primary" href="/chat" target="_blank" rel="noopener" style="text-decoration:none">💬 对话 UI</a>
         <button class="sm" id="btnTheme" onclick="cycleTheme()" title="主题：自动/暗/亮">🌓</button>
         <button class="sm" id="btnRefresh">刷新</button>
         <button class="sm" id="btnPw">修改密码</button>
@@ -968,14 +967,6 @@ function viewSettings(){
       ${fld("s_img_cap","图库最大容量（条）", s.image_max_capacity||500,"number","超过后自动淘汰最旧记录；0 = 不限制")}
       ${fld("s_vid_cap","视频库最大容量（条）", s.video_max_capacity||200,"number","超过后自动淘汰最旧记录；0 = 不限制")}
     </div>
-  </div>
-  <div class="card">
-    <h2>Chat 密码设置</h2>
-    <div class="grid g2">
-      <div><label>Chat 访问密码 (留空=无需密码)</label><input id="s_chat_pw" type="password" placeholder="输入新密码或留空禁用"></div>
-      <div><label>确认密码</label><input id="s_chat_pw_confirm" type="password" placeholder="再次输入密码"></div>
-    </div>
-    <div class="hint" style="margin-top:8px">设置后，访问 /chat 页面需要输入密码。清空密码则无需验证即可访问。</div>
   </div>
   <div class="card">
     <h2>迁移</h2>
