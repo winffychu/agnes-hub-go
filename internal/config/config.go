@@ -1461,7 +1461,7 @@ func (s *Store) KeyByValue(value string) *DownstreamKey {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	for _, k := range s.Keys {
-		if subtleEqual(k.Key, value) {
+		if SubtleEqual(k.Key, value) {
 			return k
 		}
 	}
@@ -2073,7 +2073,7 @@ func (s *Store) VerifyPassword(password string) bool {
 	if hash == "" {
 		return false
 	}
-	return subtleEqual(hash, HashPassword(password, salt))
+	return SubtleEqual(hash, HashPassword(password, salt))
 }
 
 // SetPassword 改密。
@@ -2095,7 +2095,7 @@ func (s *Store) VerifyChatPassword(password string) bool {
 	if hash == "" {
 		return true // 未设置密码，允许访问
 	}
-	return subtleEqual(hash, HashPassword(password, salt))
+	return SubtleEqual(hash, HashPassword(password, salt))
 }
 
 // SetChatPassword 设置/更新 chat 页面密码。空密码表示禁用。
@@ -2113,11 +2113,25 @@ func (s *Store) SetChatPassword(password string) error {
 	return s.saveSettingsLocked()
 }
 
-// SessionToken 派生会话令牌（改密即全端失效）。
+// SessionToken 派生管理员会话令牌（改密即全端失效）。
 func (s *Store) SessionToken() string {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	sum := sha256.Sum256([]byte(s.Settings.AdminPasswordSalt + ":" + s.Settings.AdminPasswordHash + ":agnes-hub-go"))
+	return hex.EncodeToString(sum[:])
+}
+
+// ChatToken 派生 chat 页会话令牌。不落地存储、随每次校验即时派生：
+// 与密码哈希同源（改 chat 密码即全体失效），且从 settings.json 里的
+// 哈希/盐**反推不出**这个值——修复历史缺陷「cookie 值为可预测的字面量，
+// 任何人手写 cookie 即通过认证」。盐里混入 ":chat" 域分隔，与 admin 令牌隔离。
+func (s *Store) ChatToken() string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.Settings.ChatPasswordHash == "" {
+		return "" // 未设密码时无令牌（chatAuthed 的免密分支处理）
+	}
+	sum := sha256.Sum256([]byte(s.Settings.ChatPasswordSalt + ":" + s.Settings.ChatPasswordHash + ":chat"))
 	return hex.EncodeToString(sum[:])
 }
 
@@ -2152,8 +2166,8 @@ func orDefault(v, fallback string) string {
 	return v
 }
 
-// subtleEqual 常量时间字符串比较，避免密钥被时序侧信道推断。
-func subtleEqual(a, b string) bool {
+// SubtleEqual 常量时间字符串比较，避免密钥被时序侧信道推断。
+func SubtleEqual(a, b string) bool {
 	if len(a) != len(b) {
 		return false
 	}

@@ -132,15 +132,18 @@ func (s *Server) authed(r *http.Request) bool {
 }
 
 // chatAuthed 检查 chat 页面密码是否验证通过（cookie 或无密码设置）。
+// cookie 值必须是 Store.ChatToken() 派生令牌——历史上这里只判非空且签发值
+// 是字面量 "authenticated"，任何人手写 cookie 即绕过认证（审计 P0）。
 func (s *Server) chatAuthed(r *http.Request) bool {
-	// 先检查是否有 chat 密码 cookie
-	c, err := r.Cookie(chatPasswordCookie)
-	if err == nil && c.Value != "" {
-		return true
-	}
-	// 未设置密码则允许访问
 	settings := s.Store.SettingsSnapshot()
-	return settings.ChatPasswordHash == ""
+	if settings.ChatPasswordHash == "" {
+		return true // 未设置密码则允许访问
+	}
+	c, err := r.Cookie(chatPasswordCookie)
+	if err != nil || c.Value == "" {
+		return false
+	}
+	return config.SubtleEqual(c.Value, s.Store.ChatToken())
 }
 
 // authedOrChat 同时接受管理员会话或 Chat 密码会话（图片/视频库接口在两种入口下都要可用）。
@@ -232,9 +235,11 @@ func (s *Server) apiChatLogin(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, &apiError{Status: 401, Type: "authentication_error", Message: "密码错误"})
 		return
 	}
-	// 设置 chat 密码 cookie（7天过期）
-	http.SetCookie(w, &http.Cookie{Name: chatPasswordCookie, Value: "authenticated",
-		Path: "/chat", HttpOnly: false, SameSite: http.SameSiteLaxMode, MaxAge: 7 * 86400})
+	// 设置 chat 密码 cookie（7天过期）。值用 ChatToken 派生令牌而非字面量；
+	// Path=/ 使 /api/* 下的 jobs/logs 端点也能携带（历史上 Path=/chat 导致
+	// 这些端点收不到 cookie,chat 登录后图片/视频库接口 403）。
+	http.SetCookie(w, &http.Cookie{Name: chatPasswordCookie, Value: s.Store.ChatToken(),
+		Path: "/", HttpOnly: true, SameSite: http.SameSiteLaxMode, MaxAge: 7 * 86400})
 	writeJSON(w, 200, map[string]any{"ok": true}, nil)
 }
 
@@ -1252,6 +1257,14 @@ func applySettings(st *config.Settings, p map[string]any) {
 		}
 		st.ModelAliases = next
 	}
+	// 动态模型清单（settings.json 可维护；此前只加了字段没加白名单，
+	// 控制台保存设置时这两个字段永远无法落盘——动态配置成半成品）。
+	if v, ok := p["free_models"]; ok {
+		st.FreeModels = stringList(v)
+	}
+	if v, ok := p["dead_models"]; ok {
+		st.DeadModels = stringList(v)
+	}
 	if v, ok := p["auto_model_name"]; ok && strings.TrimSpace(asStr(v)) != "" {
 		st.AutoModelName = asStr(v)
 	}
@@ -1773,6 +1786,13 @@ func (s *Server) apiUpdateApply(w http.ResponseWriter, r *http.Request) {
 
 // handleChatProxy 代理文本对话请求到账号池，无需下游 API Key。
 func (s *Server) handleChatProxy(w http.ResponseWriter, r *http.Request) {
+	// 审计修复（P0）：此端点直接烧上游配额（多账号池 + RPM），历史上完全
+	// 无鉴权——任何能访问到网关的人都可以免密码消耗全部账号额度。
+	// 鉴权与 /chat 页面一致：chat 密码 cookie 或管理员会话或免密模式。
+	if !s.authedOrChat(r) {
+		s.deny(w)
+		return
+	}
 	body, _, e := readBody(r)
 	if e != nil {
 		writeErr(w, e)
@@ -1995,6 +2015,12 @@ func (s *Server) finishChatStream(w http.ResponseWriter, result *relay.Result, e
 
 // handleChatMediaProxy 代理图片/视频请求到账号池，无需下游 API Key。
 func (s *Server) handleChatMediaProxy(w http.ResponseWriter, r *http.Request) {
+	// 审计修复（P0）：同 handleChatProxy——生图/视频提交同样烧上游配额，
+	// 必须鉴权（chat 密码 cookie / 管理员会话 / 免密模式）。
+	if !s.authedOrChat(r) {
+		s.deny(w)
+		return
+	}
 	body, _, e := readBody(r)
 	if e != nil {
 		writeErr(w, e)

@@ -899,6 +899,15 @@ function viewSettings(){
       ${MODALITIES.map(m=>`<div><label>${m}</label>
         <input id="s_pref_${m}" value="${esc((pref[m]||[]).join(", "))}"></div>`).join("")}
     </div>
+    <h3 style="margin-top:14px">动态模型清单（改完保存即生效，无需重编译）</h3>
+    <div class="grid g2">
+      <div><label>免费模型清单（free_models）</label>
+        <input id="s_free_models" value="${esc((s.free_models||[]).join(", "))}" placeholder="agnes-3.0-flash, agnes-2.5-flash, ...">
+        <div class="hint">逗号分隔；为空时按官方口径启发式（-flash 后缀视为免费）。上游新增免费模型改这里即可</div></div>
+      <div><label>失效模型清单（dead_models）</label>
+        <input id="s_dead_models" value="${esc((s.dead_models||[]).join(", "))}" placeholder="agnes-1.5-flash, agnes-2.0-flash, ...">
+        <div class="hint">逗号分隔；命中的模型在调度/偏好/别名处一律剔除，请求快速失败而非盲发上游</div></div>
+    </div>
   </div>
   <div class="card">
     <h2>节流与排队</h2>
@@ -985,6 +994,8 @@ function bindSettingsEvents(){
     const g = id=>document.getElementById(id).value;
     const payload = {
       auto_model_name:g("s_auto_name"),
+      free_models:g("s_free_models").split(",").map(x=>x.trim()).filter(Boolean),
+      dead_models:g("s_dead_models").split(",").map(x=>x.trim()).filter(Boolean),
       auto_intent:{content_scan:g("s_scan")==="1", min_confidence:Number(g("s_conf")),
         default_image_size:g("s_isize"), image_input_field:g("s_ifield"),
         video_input_field:g("s_vfield"), video_wait_sec:Number(g("s_vwait")),

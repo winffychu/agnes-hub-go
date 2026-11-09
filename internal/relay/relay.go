@@ -299,7 +299,18 @@ func UpstreamURLForRoot(root, path string) string {
 // ---------------------------------------------------------------------------
 
 // relayRand 是「随机选择」站点模式用的随机数源（仅用于选站，无需加密强度）。
-var relayRand = rand.New(rand.NewSource(time.Now().UnixNano()))
+// rand.Rand 非并发安全——并发请求同时 Intn 会数据竞争（审计 P1-5），加锁串行化。
+var (
+	relayRandMu   sync.Mutex
+	relayRand     = rand.New(rand.NewSource(time.Now().UnixNano()))
+)
+
+// relayRandIntn 并发安全的随机取数。
+func relayRandIntn(n int) int {
+	relayRandMu.Lock()
+	defer relayRandMu.Unlock()
+	return relayRand.Intn(n)
+}
 
 // sitePlan 计算某次请求应使用的上游站点策略。
 //   - primary：本次主用站点 URL（带 /v1 归一化）；非官方站点（amd / openrouter）
@@ -327,7 +338,7 @@ func planSite(account *config.Account, mode string) sitePlan {
 	case "cn_first": // 国内优先：账号原站点为主，401/403 可切国际
 		return sitePlan{primary: account.BaseURL, swappable: true}
 	case "random": // 随机选择：每次请求随机取一站，401/403 可切另一站
-		if relayRand.Intn(2) == 0 {
+		if relayRandIntn(2) == 0 {
 			return sitePlan{primary: config.CNBaseURL, swappable: true}
 		}
 		return sitePlan{primary: config.DefaultBaseURL, swappable: true}
