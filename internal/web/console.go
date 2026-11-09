@@ -2,7 +2,7 @@ package web
 
 import (
 	"context"
-	_ "embed"
+	"embed"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
@@ -20,7 +20,10 @@ import (
 )
 
 //go:embed static/console.html
-var consoleHTML []byte
+var legacyConsoleHTML []byte
+
+//go:embed all:static/console
+var consoleFS embed.FS
 
 //go:embed static/logo.png
 var logoPNG []byte
@@ -29,11 +32,53 @@ const cookieName = "agnes_hub_session"
 
 func (s *Server) consoleRoutes() {
 	m := s.mux
+	// 新版控制台:ES Module 多文件(index.html + app.js + pages/*)。
+	// mime 类型按扩展名显式设置(js 必须是 text/javascript,否则浏览器拒绝执行 module)。
 	m.HandleFunc("GET /console", func(w http.ResponseWriter, r *http.Request) {
+		data, err := consoleFS.ReadFile("static/console/index.html")
+		if err != nil {
+			http.Error(w, "console index missing", http.StatusInternalServerError)
+			return
+		}
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		w.Header().Set("Content-Length", fmt.Sprint(len(consoleHTML)))
+		w.Header().Set("Content-Length", fmt.Sprint(len(data)))
+		w.Header().Set("Cache-Control", "no-cache")
 		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write(consoleHTML)
+		_, _ = w.Write(data)
+	})
+	m.HandleFunc("GET /console/", func(w http.ResponseWriter, r *http.Request) {
+		name := strings.TrimPrefix(r.URL.Path, "/console/")
+		if name == "" || strings.Contains(name, "..") {
+			http.NotFound(w, r)
+			return
+		}
+		data, err := consoleFS.ReadFile("static/console/" + name)
+		if err != nil {
+			http.NotFound(w, r)
+			return
+		}
+		switch {
+		case strings.HasSuffix(name, ".js"):
+			w.Header().Set("Content-Type", "text/javascript; charset=utf-8")
+		case strings.HasSuffix(name, ".html"):
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		case strings.HasSuffix(name, ".css"):
+			w.Header().Set("Content-Type", "text/css; charset=utf-8")
+		default:
+			w.Header().Set("Content-Type", "application/octet-stream")
+		}
+		// module 文件带 hash 缓存破坏前,短缓存即可
+		w.Header().Set("Cache-Control", "no-cache")
+		w.Header().Set("Content-Length", fmt.Sprint(len(data)))
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write(data)
+	})
+	// 旧版单文件控制台(一个版本周期的回退入口)
+	m.HandleFunc("GET /console-legacy", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.Header().Set("Content-Length", fmt.Sprint(len(legacyConsoleHTML)))
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write(legacyConsoleHTML)
 	})
 	m.HandleFunc("GET /logo.png", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "image/png")

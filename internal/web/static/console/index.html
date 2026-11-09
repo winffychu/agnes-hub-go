@@ -1,0 +1,189 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Agnes Hub 控制台</title>
+<style>
+
+  :root{
+    --bg:#f6f7f9; --panel:#ffffff; --line:#e4e7ec; --ink:#1c2430; --muted:#65717f;
+    --brand:#2f6fed; --brand-soft:#eaf1ff; --good:#12805c; --good-soft:#e7f6ef;
+    --warn:#a86400; --warn-soft:#fdf3e2; --bad:#c0293b; --bad-soft:#fdecee;
+    --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,"Liberation Mono",monospace;
+    color-scheme: light;
+  }
+  /* 暗色主题：data-theme="dark" 手动切换；"auto" 跟随系统 prefers-color-scheme */
+  html[data-theme="dark"]{
+    --bg:#0f141a; --panel:#161d26; --line:#2a3441; --ink:#e6edf3; --muted:#8b98a5;
+    --brand:#4d8dff; --brand-soft:#16283f; --good:#3ecf8e; --good-soft:#12291f;
+    --warn:#e2a336; --warn-soft:#332a12; --bad:#f06a78; --bad-soft:#3a1a20;
+    color-scheme: dark;
+  }
+  @media (prefers-color-scheme: dark){
+    html[data-theme="auto"]{
+      --bg:#0f141a; --panel:#161d26; --line:#2a3441; --ink:#e6edf3; --muted:#8b98a5;
+      --brand:#4d8dff; --brand-soft:#16283f; --good:#3ecf8e; --good-soft:#12291f;
+      --warn:#e2a336; --warn-soft:#332a12; --bad:#f06a78; --bad-soft:#3a1a20;
+      color-scheme: dark;
+    }
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);
+    font:14px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI","Microsoft YaHei",sans-serif}
+  a{color:var(--brand)}
+  h1,h2,h3{margin:0 0 10px;font-weight:650}
+  h1{font-size:18px}h2{font-size:15px}h3{font-size:13px;color:var(--muted);text-transform:none}
+  code,pre{font-family:var(--mono);font-size:12px}
+  .row{display:flex;gap:12px;flex-wrap:wrap;align-items:center}
+  .spread{display:flex;gap:12px;justify-content:space-between;align-items:center;flex-wrap:wrap}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:16px;margin-bottom:14px}
+  .grid{display:grid;gap:12px}
+  .g4{grid-template-columns:repeat(auto-fit,minmax(180px,1fr))}
+  .g2{grid-template-columns:repeat(auto-fit,minmax(320px,1fr))}
+  .kpi{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:14px}
+  .kpi .v{font-size:24px;font-weight:700;font-family:var(--mono)}
+  .kpi .k{color:var(--muted);font-size:12px;margin-bottom:4px}
+  button{font:inherit;padding:7px 13px;border-radius:9px;border:1px solid var(--line);
+    background:#fff;color:var(--ink);cursor:pointer}
+  button:hover{border-color:var(--muted)}
+  button.primary{background:var(--brand);border-color:var(--brand);color:#fff}
+  button.primary:hover{filter:brightness(1.06)}
+  button.danger{color:var(--bad);border-color:#f0cdd2}
+  button.sm{padding:4px 9px;font-size:12px;border-radius:7px}
+  input,select,textarea{font:inherit;padding:7px 10px;border:1px solid var(--line);
+    border-radius:9px;background:#fff;color:var(--ink);width:100%}
+  textarea{font-family:var(--mono);font-size:12px;min-height:90px;resize:vertical}
+  label{font-size:12px;color:var(--muted);display:block;margin-bottom:4px}
+  table{width:100%;border-collapse:collapse}
+  th,td{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+  th{font-size:12px;color:var(--muted);font-weight:600;background:#fafbfc}
+  tr:last-child td{border-bottom:none}
+  .pill{display:inline-block;padding:2px 8px;border-radius:999px;font-size:11px;
+    background:#eef1f5;color:var(--muted);white-space:nowrap}
+  .pill.ok{background:var(--good-soft);color:var(--good)}
+  .pill.off{background:var(--bad-soft);color:var(--bad)}
+  .pill.info{background:var(--brand-soft);color:var(--brand)}
+  .pill.warn{background:var(--warn-soft);color:var(--warn)}
+  .muted{color:var(--muted)}
+  .mono{font-family:var(--mono)}
+  .scroll{overflow:auto;max-height:520px}
+  .tabs{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:14px}
+  .tabs button{border-radius:999px;padding:6px 14px}
+  .tabs button.on{background:var(--ink);color:#fff;border-color:var(--ink)}
+  .hide{display:none!important}
+  .banner{padding:10px 12px;border-radius:10px;font-size:13px;margin-bottom:12px}
+  .banner.warn{background:var(--warn-soft);color:var(--warn)}
+  .banner.good{background:var(--good-soft);color:var(--good)}
+  .banner.bad{background:var(--bad-soft);color:var(--bad)}
+  .bar{height:7px;border-radius:999px;background:var(--line);overflow:hidden;min-width:70px}
+  .bar>i{display:block;height:100%;background:var(--brand)}
+  .login{max-width:380px;margin:8vh auto}
+  .hint{font-size:12px;color:var(--muted);margin-top:6px}
+  details summary{cursor:pointer;color:var(--brand);font-size:13px}
+
+/* ============ 移动端适配 ============ */
+@media (max-width:768px){
+  body{font-size:15px}
+  h1{font-size:16px}
+  .spread{flex-direction:column;align-items:stretch;gap:8px}
+  .spread > div:last-child{display:flex;flex-wrap:wrap;gap:6px}
+  .kpi .v{font-size:20px}
+  .g4{grid-template-columns:repeat(2,1fr)}
+  .g2{grid-template-columns:1fr}
+  .tabs{gap:4px;overflow-x:auto;flex-wrap:nowrap;-webkit-overflow-scrolling:touch;scrollbar-width:none}
+  .tabs::-webkit-scrollbar{display:none}
+  .tabs button{white-space:nowrap;padding:5px 11px;font-size:13px}
+  .scroll{max-height:400px}
+  table{font-size:13px}
+  th,td{padding:6px 8px}
+  td .row{gap:4px;flex-wrap:wrap}
+  button.sm{padding:4px 8px;font-size:11px}
+  .card{padding:12px;margin-bottom:10px}
+}
+@media (min-width:769px){
+  .tabs{overflow-x:visible}
+}
+/* ============ 弹窗 ============ */
+.modal-back{position:fixed;inset:0;background:rgba(16,22,30,.45);display:flex;align-items:flex-start;
+  justify-content:center;z-index:50;padding:40px 16px;overflow:auto}
+.modal{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:20px;
+  max-width:780px;width:100%;box-shadow:0 14px 44px rgba(0,0,0,.20)}
+.modal .grid{grid-template-columns:1fr 1fr}
+.modal h2{margin-bottom:12px}
+/* 完整用户请求弹窗 */
+.reqbox{max-width:720px;width:100%}
+.reqbox pre{margin:0;background:var(--bg,#0d1117);color:var(--ink,#e6edf3);
+  border:1px solid var(--line,#30363d);border-radius:10px;padding:12px;
+  max-height:52vh;overflow:auto;font:12.5px/1.55 "Cascadia Code",Consolas,monospace;
+  white-space:pre-wrap;word-break:break-word}
+.reqbox .bar{display:flex;gap:8px;align-items:center;margin:10px 0 8px}
+.reqbox .kv{display:flex;gap:8px;margin:3px 0}
+.reqbox .hmeta{background:var(--panel,#161b22);border:1px solid var(--line,#30363d);
+  border-radius:10px;padding:10px 12px;margin-top:10px}
+.reqbox .trunc{color:var(--warn,#d29922);font-size:12px;margin-top:6px}
+.reqbox .muted{color:var(--muted,#8b949e)}
+
+/* ---------------- 实时动态图表（运行实况） ---------------- */
+.live-head{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:10px}
+.live-head .win-pill{padding:3px 11px;border-radius:999px;border:1px solid var(--line,#e3e8ef);
+  background:#fff;color:var(--sub,#5b6573);font-size:12px;font-weight:600;cursor:pointer}
+.live-head .win-pill.on{background:var(--blue,#2f6fd6);color:#fff;border-color:var(--blue,#2f6fd6)}
+.live-head .live-dot{width:9px;height:9px;border-radius:50%;background:var(--green,#2f9e6f);
+  box-shadow:0 0 0 3px rgba(47,158,111,.18);animation:livepulse 2s ease-in-out infinite}
+/* 「网关正在处理 N 个请求」——低频大任务时负载百分比恒接近 0，
+   这个小胶囊是唯一能直接看出网关在不在干活的地方。 */
+.live-head .busy-pill{font-size:12px;padding:3px 11px;border-radius:999px;border:1px solid transparent;white-space:nowrap}
+.live-head .busy-idle{background:var(--surface2,#f1f4f9);color:var(--muted,#8b949e);border-color:var(--line,#e3e8ef)}
+.live-head .busy-on{background:rgba(47,111,214,.12);color:var(--blue,#2f6fd6);border-color:rgba(47,111,214,.35);font-weight:600}
+.live-head .busy-warn{background:rgba(224,138,30,.14);color:#b26f10;border-color:rgba(224,138,30,.4);font-weight:600}
+  box-shadow:0 0 0 0 rgba(47,158,111,.6);animation:pulse 1.4s infinite}
+@keyframes pulse{0%{box-shadow:0 0 0 0 rgba(47,158,111,.5)}70%{box-shadow:0 0 0 7px rgba(47,158,111,0)}100%{box-shadow:0 0 0 0 rgba(47,158,111,0)}}
+.live-card{background:var(--card,#fff);border:1px solid var(--line,#e3e8ef);border-radius:14px;
+  padding:16px 18px;margin:14px 0}
+.live-card h3{margin:0 0 2px;font-size:15px}
+.live-card .sub2{color:var(--sub,#5b6573);font-size:12px;margin-bottom:8px}
+.live-canvas{width:100%;height:150px;display:block}
+.live-readout{display:flex;flex-wrap:wrap;gap:12px;margin-top:8px}
+.live-readout b{font-size:18px;font-weight:600}
+.live-readout span{font-size:11px;color:var(--sub,#5b6573);display:block}
+.live-legend{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
+.live-legend .lg{display:inline-flex;align-items:center;gap:5px;font-size:12px;
+  background:var(--brand-soft);border-radius:999px;padding:2px 9px}
+.live-legend .lg i{width:9px;height:9px;border-radius:2px;display:inline-block}
+
+/* ============ 侧栏布局 ============ */
+.shell{display:flex;min-height:100vh}
+.sidebar{width:212px;flex:0 0 212px;background:var(--panel);border-right:1px solid var(--line);
+  padding:14px 12px;display:flex;flex-direction:column;gap:10px;position:sticky;top:0;height:100vh;overflow:auto}
+.brand{display:flex;align-items:center;gap:8px;padding:2px 6px 10px;border-bottom:1px solid var(--line)}
+.brand b{font-size:14px}
+.nav{display:flex;flex-direction:column;gap:2px}
+.nav a{display:block;padding:8px 12px;border-radius:9px;color:var(--ink);text-decoration:none;font-size:13.5px}
+.nav a:hover{background:var(--brand-soft)}
+.nav a.on{background:var(--brand);color:#fff;font-weight:600}
+.side-foot{margin-top:auto;display:flex;gap:6px;flex-wrap:wrap}
+.main{flex:1;min-width:0;padding:18px 20px;max-width:1160px}
+@media (max-width:768px){
+  .shell{flex-direction:column}
+  .sidebar{width:auto;flex:none;height:auto;position:static}
+  .nav{flex-direction:row;flex-wrap:wrap}
+  .side-foot{margin-top:8px}
+  .main{padding:12px}
+}
+</style>
+</head>
+<body>
+<script>
+/* 主题引导：必须在首帧渲染前执行，避免暗色用户闪白屏。
+   三态：auto（跟随系统）/ light / dark，持久化 localStorage。 */
+(function(){
+  const saved = localStorage.getItem("agnes_theme") || "auto";
+  document.documentElement.setAttribute("data-theme", saved);
+})();
+</script>
+<div id="app"></div>
+<div id="modalRoot"></div>
+<script type="module" src="app.js"></script>
+</body>
+</html>
