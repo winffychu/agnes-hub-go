@@ -2,7 +2,8 @@
 import { api } from "../api.js";
 import { state, POOLS, MODALITIES } from "../state.js";
 import { esc, num, toast } from "../ui.js";
-import { liveSection, drawLive, bindLive } from "../live.js";
+import { cssVar } from "../charts.js";
+import { liveSection, bindLive } from "../live.js";
 
 function arrivalCard(s){
   const a = s.arrival;

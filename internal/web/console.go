@@ -34,7 +34,9 @@ func (s *Server) consoleRoutes() {
 	m := s.mux
 	// 新版控制台:ES Module 多文件(index.html + app.js + pages/*)。
 	// mime 类型按扩展名显式设置(js 必须是 text/javascript,否则浏览器拒绝执行 module)。
-	m.HandleFunc("GET /console", func(w http.ResponseWriter, r *http.Request) {
+	// 根路径(/)与 /console 提供同一入口:{$} 是 Go 1.22 mux 的「精确匹配根路径」,
+	// 不会吞掉其它未注册路径的 404 行为。
+	serveIndex := func(w http.ResponseWriter, r *http.Request) {
 		data, err := consoleFS.ReadFile("static/console/index.html")
 		if err != nil {
 			http.Error(w, "console index missing", http.StatusInternalServerError)
@@ -45,7 +47,9 @@ func (s *Server) consoleRoutes() {
 		w.Header().Set("Cache-Control", "no-cache")
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write(data)
-	})
+	}
+	m.HandleFunc("GET /{$}", serveIndex)
+	m.HandleFunc("GET /console", serveIndex)
 	m.HandleFunc("GET /console/", func(w http.ResponseWriter, r *http.Request) {
 		name := strings.TrimPrefix(r.URL.Path, "/console/")
 		if name == "" || strings.Contains(name, "..") {

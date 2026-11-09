@@ -1,8 +1,8 @@
 // 运行实况:每秒采样 /metrics-history,canvas 三图 + 缓动直方图。
-import { api } from "../api.js";
-import { state } from "../state.js";
-import { esc } from "../ui.js";
-import { setupCanvas, inkColor, cssVar, emptyHint, drawLines, drawAccountBars, liveAccCols } from "../charts.js";
+import { api } from "./api.js";
+import { state } from "./state.js";
+import { esc } from "./ui.js";
+import { setupCanvas, inkColor, cssVar, emptyHint, drawLines, drawAccountBars, liveAccCols } from "./charts.js";
 
 const LIVE = { timer:null, win:"60s", hist:null, meta:[],
                 barCur:null, barMoving:false, barDirty:true, barRaf:null };
@@ -44,7 +44,7 @@ export function liveSection(){
 }
 
 
-function drawLive(){
+export function drawLive(){
   if(!LIVE.hist) return;
   const cvL=document.getElementById("cvLoad"), cvS=document.getElementById("cvScale"), cvA=document.getElementById("cvAcc");
   if(!cvL||!cvS||!cvA) return;
@@ -146,11 +146,20 @@ function startLiveTimer(){
   LIVE.barRaf=requestAnimationFrame(loop);
 }
 
+let liveDelegated=false;
 export function bindLive(){
   startLiveTimer();
-  document.querySelectorAll(".win-pill").forEach(b=>{
-    b.onclick=()=>{ LIVE.win=b.dataset.win; render(); liveTick(); };
-  });
+  // 事件委托绑一次即可：win-pill 按钮随 liveSection() HTML 重插后依然生效
+  if(!liveDelegated){
+    liveDelegated=true;
+    document.addEventListener("click",(ev)=>{
+      const b=ev.target.closest(".win-pill");
+      if(!b) return;
+      LIVE.win=b.dataset.win;
+      document.querySelectorAll(".win-pill").forEach(x=>x.classList.toggle("on",x.dataset.win===LIVE.win));
+      liveTick();
+    });
+  }
   liveTick();
 }
 
