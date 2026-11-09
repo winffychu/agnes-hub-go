@@ -1,4 +1,4 @@
-// 设置页(情景/auto/节流/路由/迁移)。
+// 设置页:分区块 + 侧锚点;情景/auto/节流/路由/优化/迁移各自成区。
 import { api } from "../api.js";
 import { state, MODALITIES } from "../state.js";
 import { esc, num, toast } from "../ui.js";
@@ -14,55 +14,50 @@ export function viewSettings(){
   const scenarios = state.scenarios || [];
   const scOpts = scenarios.map(p=>`<option value="${esc(p.name)}" ${s.scenario===p.name?"selected":""}>${esc(p.name)} · ${esc(p.desc)}</option>`).join("");
   const rec = (state.scenarioData && state.scenarioData.recommend) || null;
+  const check = (id, on, text, hint)=>`
+    <label class="check-row" for="${id}">
+      <input type="checkbox" id="${id}" ${on?"checked":""}>
+      <span><span class="t">${text}</span>${hint?`<div class="hint">${hint}</div>`:""}</span>
+    </label>`;
   return `
-  <div class="card" style="border-color:var(--accent,#3b82f6)">
-    <h2>运行情景（按网关执行方向一键侧重）</h2>
-    <div class="muted" style="margin-bottom:10px">选一个情景，网关会按该方向自动调安全阀 / 文本 RPM / 重试 / 队列 / 并发等旋钮并即时生效；账号级 RPM 覆盖仍优先，不被冲掉。参数按 8 个免费号基准设计。</div>
-    <div class="row" style="gap:10px;align-items:flex-end">
-      <div><label>当前情景</label>
-        <select id="s_scenario" style="min-width:320px">${scOpts||`<option value="default">default · 默认均衡</option>`}</select>
-        <div class="hint">切到「多任务并行」默认打开两级队列（短调用优先）；「挂机批量」拉高空闲容忍与队列。</div>
-      </div>
+  <div class="card">
+    <div class="card-head"><h2>运行情景<span class="tag">按网关执行方向一键侧重</span></h2></div>
+    <div class="hint" style="margin-bottom:12px">选一个情景，网关按该方向自动调安全阀 / 文本 RPM / 重试 / 队列 / 并发等旋钮并即时生效；账号级 RPM 覆盖仍优先，不被冲掉。参数按 8 个免费号基准设计。</div>
+    <div class="row" style="align-items:flex-end">
+      <div style="flex:1;min-width:280px"><label>当前情景</label>
+        <select id="s_scenario">${scOpts||`<option value="default">default · 默认均衡</option>`}</select></div>
       <button class="primary" id="btnApplyScenario">一键应用</button>
     </div>
-    <div style="margin-top:10px">
-      <label for="s_two_level" style="display:flex;gap:8px;align-items:center;cursor:pointer">
-        <input type="checkbox" id="s_two_level" style="flex:0 0 16px;width:16px;height:16px;margin:0;padding:0" ${s.text_two_level_queue?"checked":""}>
-        <span>文本两级队列：同池内非流式（工具/短调用）优先于流式（长生成）出队</span>
-      </label>
-      <div class="hint">仅改出队顺序、不破坏该池 RPM 节拍；多任务并发卡顿明显时打开。</div>
-    </div>
-    <div style="margin-top:14px;padding-top:12px;border-top:1px dashed var(--border)">
-      <label for="s_auto_scenario" style="display:flex;gap:8px;align-items:center;cursor:pointer">
-        <input type="checkbox" id="s_auto_scenario" style="flex:0 0 16px;width:16px;height:16px;margin:0;padding:0" ${state.scenarioData&&state.scenarioData.auto_scenario?"checked":""}>
-        <span>自动检测接入方负载 → 一键匹配推荐情景</span>
-      </label>
-      <div class="hint">后台每 30s 采一次负载画像（文/图/视频占比、流式比、并发、429 压力），自动切到最贴合的情景；手动应用情景会同时保留此开关。</div>
+    <div class="hint" style="margin-top:6px">切到「多任务并行」默认打开两级队列（短调用优先）；「挂机批量」拉高空闲容忍与队列。</div>
+    <div class="sec">
+      ${check("s_two_level", s.text_two_level_queue,
+        "文本两级队列：同池内非流式（工具/短调用）优先于流式（长生成）出队",
+        "仅改出队顺序、不破坏该池 RPM 节拍；多任务并发卡顿明显时打开。")}
+      ${check("s_auto_scenario", state.scenarioData&&state.scenarioData.auto_scenario,
+        "自动检测接入方负载 → 一键匹配推荐情景",
+        "后台每 30s 采一次负载画像（文/图/视频占比、流式比、并发、429 压力），自动切到最贴合的情景；手动应用情景会同时保留此开关。")}
       ${rec?`
-      <div class="rec-card" style="margin-top:8px">
-        <div class="rec-row">
+      <div style="margin-top:8px;padding:12px 14px;border:1px solid var(--brand-line);background:var(--brand-soft);border-radius:10px">
+        <div class="row" style="justify-content:space-between">
           <span class="pill info">推荐情景：${esc(rec.name)}</span>
-          <button class="primary" id="btnApplyRec">按推荐一键应用</button>
+          <button class="primary sm" id="btnApplyRec">按推荐一键应用</button>
         </div>
-        <div class="hint">${esc(rec.reason||"")}</div>
+        <div class="hint" style="color:var(--brand);margin-top:6px">${esc(rec.reason||"")}</div>
         <div class="muted" style="font-size:12px;margin-top:4px">当前画像：${esc(rec.describe||"暂无负载数据")}</div>
       </div>`:`<div class="hint" style="margin-top:6px">暂无负载数据（还没请求过），画像积累后即可给出推荐。</div>`}
     </div>
-    <div style="margin-top:14px;padding-top:12px;border-top:1px dashed var(--border)">
-      <h3 style="margin:0 0 6px">429 网关内自动重试（不中断客户端任务）</h3>
-      <div class="row" style="gap:10px;align-items:flex-end">
-        <div><label>429 自动重试次数上限</label>
-          <input id="s_rl_retry_max" type="number" value="${s.rate_limit_retry_max??6}">
-          <div class="hint">0=沿用普通 retry_max；限流时网关换号+重新排队自动重试到成功或到此为止</div></div>
-        <div><label>429 总等待预算（秒）</label>
-          <input id="s_rl_wait_budget_s" type="number" value="${Math.round((s.rate_limit_wait_budget_ms??180000)/1000)}">
-          <div class="hint">0=不限（仅按次数停）；累计退避等待超此即停并透传 429，防止持续限流时挂死</div></div>
+    <div class="sec">
+      <h3>429 网关内自动重试<span class="tag">不中断客户端任务</span></h3>
+      <div class="grid g2" style="margin-top:10px">
+        ${fld("s_rl_retry_max","429 自动重试次数上限", s.rate_limit_retry_max??6,"number","0=沿用普通 retry_max；限流时网关换号+重新排队自动重试到成功或到此为止")}
+        ${fld("s_rl_wait_budget_s","429 总等待预算（秒）", Math.round((s.rate_limit_wait_budget_ms??180000)/1000),"number","0=不限（仅按次数停）；累计退避等待超此即停并透传 429，防止持续限流时挂死")}
       </div>
-      <div class="hint">上游「达到最大限制/429」不再直接弹给客户端，而是网关内部排队+退避自动重试直到成功或预算耗尽，客户端在途任务不被中断。</div>
+      <div class="hint">上游「达到最大限制/429」不再直接弹给客户端，而是网关内部排队+退避自动重试直到成功或预算耗尽。</div>
     </div>
   </div>
+
   <div class="card">
-    <h2>统一模型入口（auto）</h2>
+    <div class="card-head"><h2>统一模型入口（auto）</h2></div>
     <div class="grid g2">
       ${fld("s_auto_name","对外统一模型名", s.auto_model_name||"auto","text","客户端只填这个名字，网关自动判定模态")}
       <div><label>内容判定（关闭则只看端点/参数）</label>
@@ -74,23 +69,28 @@ export function viewSettings(){
       ${fld("s_vfield","图生视频输入图字段名", ai.video_input_field||"image","text","")}
       ${fld("s_vwait","视频阻塞等待秒数", ai.video_wait_sec??0,"number","0 = 立即返回 job_id 让客户端轮询")}
     </div>
-    <h3 style="margin-top:14px">模型偏好顺序（只在账号已声明的清单内生效，绝不越界）</h3>
-    <div class="grid g2">
-      ${MODALITIES.map(m=>`<div><label>${m}</label>
-        <input id="s_pref_${m}" value="${esc((pref[m]||[]).join(", "))}"></div>`).join("")}
+    <div class="sec">
+      <h3>模型偏好顺序<span class="tag">只在账号已声明的清单内生效，绝不越界</span></h3>
+      <div class="grid g3">
+        ${MODALITIES.map(m=>`<div><label>${m}</label>
+          <input id="s_pref_${m}" value="${esc((pref[m]||[]).join(", "))}"></div>`).join("")}
+      </div>
     </div>
-    <h3 style="margin-top:14px">动态模型清单（改完保存即生效，无需重编译）</h3>
-    <div class="grid g2">
-      <div><label>免费模型清单（free_models）</label>
-        <input id="s_free_models" value="${esc((s.free_models||[]).join(", "))}" placeholder="agnes-3.0-flash, agnes-2.5-flash, ...">
-        <div class="hint">逗号分隔；为空时按官方口径启发式（-flash 后缀视为免费）。上游新增免费模型改这里即可</div></div>
-      <div><label>失效模型清单（dead_models）</label>
-        <input id="s_dead_models" value="${esc((s.dead_models||[]).join(", "))}" placeholder="agnes-1.5-flash, agnes-2.0-flash, ...">
-        <div class="hint">逗号分隔；命中的模型在调度/偏好/别名处一律剔除，请求快速失败而非盲发上游</div></div>
+    <div class="sec">
+      <h3>动态模型清单<span class="tag">改完保存即生效，无需重编译</span></h3>
+      <div class="grid g2">
+        <div><label>免费模型清单（free_models）</label>
+          <input id="s_free_models" value="${esc((s.free_models||[]).join(", "))}" placeholder="agnes-3.0-flash, agnes-2.5-flash, ...">
+          <div class="hint">逗号分隔；为空时按官方口径启发式（-flash 后缀视为免费）。上游新增免费模型改这里即可</div></div>
+        <div><label>失效模型清单（dead_models）</label>
+          <input id="s_dead_models" value="${esc((s.dead_models||[]).join(", "))}" placeholder="agnes-1.5-flash, agnes-2.0-flash, ...">
+          <div class="hint">逗号分隔；命中的模型在调度/偏好/别名处一律剔除，请求快速失败而非盲发上游</div></div>
+      </div>
     </div>
   </div>
+
   <div class="card">
-    <h2>节流与排队</h2>
+    <div class="card-head"><h2>节流与排队</h2></div>
     <div class="grid g2">
       ${fld("s_safety","安全阀系数", s.safety_factor??0.9,"number","有效 RPM = 标称 × 安全阀 × 校准；默认 0.9 留 10% 余量")}
       ${fld("s_window","节拍窗口（秒）", s.pacing_window_sec??60,"number","生产保持 60；仅本地压测压缩时间轴用")}
@@ -108,11 +108,12 @@ export function viewSettings(){
       ${fld("s_vconc","视频在任务上限", s.video_max_inflight??2,"number","独立于 RPM 的任务级限制：只做 RPM 不做任务数会出现「RPM 没超但视频一直失败」")}
       ${fld("s_brev","熔断自动复活（秒）", s.breaker_revive_sec??1800,"number","401/403/402 熔断后到这个时间自动复活低速试探")}
       ${fld("s_rqtimeout","请求超时（毫秒）", s.request_timeout_ms??30000,"number","单次上游请求最长等待时间，防 hang 死连接")}
-      ${fld("s_free_text_rpm","agnes 免费档文本 RPM", s.free_text_rpm??10,"number","agnes 免费账号文本池标称 RPM（已降至 10）；修改后立即生效。per-account 的 rpm_overrides 仍优先此值")}
+      ${fld("s_free_text_rpm","agnes 免费档文本 RPM", s.free_text_rpm??10,"number","agnes 免费账号文本池标称 RPM；修改后立即生效。per-account 的 rpm_overrides 仍优先此值")}
     </div>
   </div>
+
   <div class="card">
-    <h2>路由与重试</h2>
+    <div class="card-head"><h2>路由与重试</h2></div>
     <div class="grid g2">
       <div><label>任务粘性口径</label><select id="s_affinity">
         <option value="session_then_key" ${s.affinity_mode==="session_then_key"?"selected":""}>先看会话头，无则用下游 Key（推荐）</option>
@@ -121,12 +122,12 @@ export function viewSettings(){
         <option value="none" ${s.affinity_mode==="none"?"selected":""}>不粘性（纯负载均衡）</option>
       </select><div class="hint">绑定账号拥堵（预计等待 &gt; 3s）或冷却时自动改派并更新绑定</div></div>
       <div><label>站点优先级（401/403 自动换站）</label><select id="s_region">
-        <option value="cn_first" ${s.region_priority==="cn_first"||!s.region_priority?"selected":""}>国内优先（api.agnes-ai.cn 优先，401/403 自动切国际）</option>
-        <option value="com_first" ${s.region_priority==="com_first"?"selected":""}>国际优先（api.agnes-ai.com 优先，401/403 自动切国内）</option>
-        <option value="cn_only" ${s.region_priority==="cn_only"?"selected":""}>仅国内（永远只打国内站，401/403 不换站直接熔断）</option>
-        <option value="com_only" ${s.region_priority==="com_only"?"selected":""}>仅国际（永远只打国际站，401/403 不换站直接熔断）</option>
-        <option value="random" ${s.region_priority==="random"?"selected":""}>随机选择（每次请求随机选国内/国际一站，401/403 自动切另一站）</option>
-      </select><div class="hint">cn_first / com_first / random：API Key 被 401/403 拒绝时自动切到另一官方站点重发同一账号，成功后持久化该账号的 base_url；cn_only / com_only：只打指定站点，不换站</div></div>
+        <option value="cn_first" ${s.region_priority==="cn_first"||!s.region_priority?"selected":""}>国内优先（401/403 自动切国际）</option>
+        <option value="com_first" ${s.region_priority==="com_first"?"selected":""}>国际优先（401/403 自动切国内）</option>
+        <option value="cn_only" ${s.region_priority==="cn_only"?"selected":""}>仅国内（不换站直接熔断）</option>
+        <option value="com_only" ${s.region_priority==="com_only"?"selected":""}>仅国际（不换站直接熔断）</option>
+        <option value="random" ${s.region_priority==="random"?"selected":""}>随机选择（401/403 自动切另一站）</option>
+      </select><div class="hint">cn_first / com_first / random：API Key 被拒时自动切另一官方站点重发同一账号，成功后持久化该账号 base_url；cn_only / com_only：只打指定站点</div></div>
       ${fld("s_tier","生图默认档位", s.default_image_tier||"1k","text")}
       ${fld("s_retry","最大重试次数", s.retry_max??3,"number","生图/视频提交不参与 5xx 重试，避免重复扣费")}
       ${fld("s_rbase","退避基数（毫秒）", s.retry_base_backoff_ms??500)}
@@ -134,10 +135,13 @@ export function viewSettings(){
       ${fld("s_probe","探测模型", s.probe_model||"default-model","text","账号测试按钮用的最小文本模型")}
       ${fld("s_ttl","粘性绑定 TTL（小时）", s.session_ttl_hours??72)}
     </div>
-    <div style="margin-top:12px"><button class="primary" id="btnSaveSettings">保存设置</button></div>
+    <div class="sec" style="display:flex;justify-content:flex-end">
+      <button class="primary" id="btnSaveSettings" style="min-width:140px">保存全部设置</button>
+    </div>
   </div>
+
   <div class="card">
-    <h2>优化模式与记录</h2>
+    <div class="card-head"><h2>优化模式与记录</h2></div>
     <div class="grid g2">
       <div><label>优化模式</label><select id="s_opt_mode">
         <option value="serial" ${s.optimization_mode==="serial"?"selected":""}>串行 (Serial)</option>
@@ -149,10 +153,12 @@ export function viewSettings(){
       ${fld("s_vid_cap","视频库最大容量（条）", s.video_max_capacity||200,"number","超过后自动淘汰最旧记录；0 = 不限制")}
     </div>
   </div>
+
   <div class="card">
-    <h2>迁移</h2>
+    <div class="card-head"><h2>迁移</h2>
+      <span class="desc">导出不含密钥明文可安全归档；导入为追加模式，不覆盖现有账号</span></div>
     <div class="row">
-      <button id="btnExport">导出配置（不含密钥明文）</button>
+      <button id="btnExport">导出配置（不含密钥）</button>
       <button id="btnExportFull">导出含密钥</button>
       <button id="btnExportCapture">导出 RawCapture 分析</button>
       <button id="btnImport" class="primary">导入配置</button>
@@ -198,12 +204,9 @@ export function bindSettingsEvents(){
       toast("设置已保存并立即生效","good"); await refresh(); }
     catch(e){ toast(e.message,"bad"); }
   };
-  const exp = (masked)=>async ()=>{
-    window.open("/api/export","_blank");
-    if(!masked) toast("含密钥的导出请用 /api/export 的结果自行保存","warn");
-  };
-  document.getElementById("btnExport").onclick = exp(true);
-  document.getElementById("btnExportFull").onclick = exp(true);
+  const exp = ()=>()=>{ window.open("/api/export","_blank"); };
+  document.getElementById("btnExport").onclick = exp();
+  document.getElementById("btnExportFull").onclick = exp();
   document.getElementById("btnExportCapture").onclick = () => {
     window.open("/api/export/capture-analysis", "_blank");
   };
@@ -224,7 +227,6 @@ export function bindSettingsEvents(){
     applyRec.onclick = async ()=>{
       if(!rec || !rec.name){ toast("暂无推荐（负载数据积累中）","warn"); return; }
       try{
-        // 推荐情景：一键应用该情景（含其 429 自动重试预算），并保留自动检测开关
         await api("/api/settings",{method:"POST",body:JSON.stringify({scenario:rec.name, auto_scenario:true})});
         toast(`已按推荐应用「${rec.name}」情景并开启自动检测`,"good");
         await refresh();
@@ -241,4 +243,3 @@ export function bindSettingsEvents(){
     }catch(e){ toast("导入失败："+e.message,"bad"); }
   };
 }
-
