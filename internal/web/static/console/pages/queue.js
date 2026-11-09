@@ -1,7 +1,7 @@
-// 队列与粘性绑定页。
+// 队列与粘性绑定页。清空绑定走 confirmModal（带条数明细）。
 import { api } from "../api.js";
 import { state } from "../state.js";
-import { esc, emptyBlock } from "../ui.js";
+import { esc, emptyBlock, toast, confirmModal } from "../ui.js";
 import { renderCurrent } from "../app.js";
 
 export function viewQueue(){
@@ -31,8 +31,18 @@ export function viewQueue(){
 
 export function bindQueue(){
   const b = document.getElementById("btnClearBind");
-  if(b) b.onclick = async ()=>{ if(!confirm("清空全部粘性绑定？")) return;
-    await api("/api/bindings/clear",{method:"POST"}); renderCurrent(); };
+  if(b) b.onclick = async ()=>{
+    const n = (state.bindings||[]).length;
+    const ok = await confirmModal({
+      title:"清空全部粘性绑定",
+      message:`将删除 ${n} 条会话→账号绑定，后续请求按负载重新分配（可能短暂失去会话亲和）.`,
+      confirmText:`清空 ${n} 条`,
+      danger:true,
+    });
+    if(!ok) return;
+    try{ await api("/api/bindings/clear",{method:"POST"}); renderCurrent(); }
+    catch(e){ toast(e.message,"bad"); }
+  };
 }
 
 /* 按需加载：本页拉 /api/queue + /api/bindings */

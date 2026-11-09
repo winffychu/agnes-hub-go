@@ -1,17 +1,48 @@
 // 设置页:按域分区（情景/auto/节流/路由/记录与迁移），每区独立保存、只提交本区字段。
 // 导入走弹窗预览（append/replace 显式选择）；导出按钮区分含/不含密钥。
+// v2：节流区拆「限流/队列/熔断」语义组；数字输入 min/max 校验前置；
+// 脏状态追踪（改动后保存钮变强调色 + 离开页提示）；优化模式加解释文案。
 import { api } from "../api.js";
 import { state, MODALITIES } from "../state.js";
-import { esc, toast, openModal, closeModal } from "../ui.js";
+import { esc, toast, openModal, closeModal, confirmModal } from "../ui.js";
 import { icon } from "../icons.js";
 import { renderCurrent } from "../app.js";
+
+/* 数字输入约束表：id → {min, max, label}（保存前整区校验，越界行内提示） */
+const NUM_CONSTRAINTS = {
+  s_rl_retry_max:{min:0,max:20,label:"429 重试上限"},
+  s_rl_wait_budget_s:{min:0,max:3600,label:"429 等待预算"},
+  s_conf:{min:0,max:1,label:"判定阈值"},
+  s_vwait:{min:0,max:3600,label:"视频等待"},
+  s_safety:{min:0.1,max:1,label:"安全阀系数"},
+  s_window:{min:10,max:600,label:"节拍窗口"},
+  s_penalty:{min:5,max:3600,label:"冷阱时长"},
+  s_pfactor:{min:0.1,max:1,label:"降幅系数"},
+  s_floor:{min:0.05,max:1,label:"校准下限"},
+  s_recover:{min:1,max:1000,label:"回升成功数"},
+  s_qwait:{min:1000,max:3600000,label:"最长排队"},
+  s_qsize:{min:1,max:10000,label:"每池排队上限"},
+  s_keep:{min:1000,max:60000,label:"心跳间隔"},
+  s_imconc:{min:1,max:64,label:"图片并发"},
+  s_vconc:{min:1,max:16,label:"视频在任务"},
+  s_brev:{min:60,max:86400,label:"熔断复活"},
+  s_rqtimeout:{min:1000,max:600000,label:"请求超时"},
+  s_free_text_rpm:{min:0,max:1000,label:"免费档 RPM"},
+  s_retry:{min:0,max:20,label:"重试次数"},
+  s_rbase:{min:0,max:60000,label:"退避基数"},
+  s_rmax:{min:100,max:600000,label:"退避上限"},
+  s_ttl:{min:1,max:720,label:"粘性 TTL"},
+  s_img_ret:{min:1,max:3650,label:"记录保留"},
+  s_img_cap:{min:0,max:1000000,label:"图库容量"},
+  s_vid_cap:{min:0,max:1000000,label:"视频库容量"},
+};
 
 export function viewSettings(){
   const s = state.settings || {};
   const ai = s.auto_intent || {};
   const pref = ai.preferred_models || {};
   const fld = (id,label,val,type="number",hint="")=>`
-    <div><label>${label}</label><input id="${id}" type="${type}" value="${esc(val)}">
+    <div><label>${label}</label><input id="${id}" type="${type}" value="${esc(val)}" ${NUM_CONSTRAINTS[id]?`min="${NUM_CONSTRAINTS[id].min}" max="${NUM_CONSTRAINTS[id].max}"`:""}>
     ${hint?`<div class="hint">${hint}</div>`:""}</div>`;
   const scenarios = state.scenarios || [];
   const scOpts = scenarios.map(p=>`<option value="${esc(p.name)}" ${s.scenario===p.name?"selected":""}>${esc(p.name)} · ${esc(p.desc)}</option>`).join("");
@@ -21,8 +52,9 @@ export function viewSettings(){
       <input type="checkbox" id="${id}" ${on?"checked":""}>
       <span><span class="t">${text}</span>${hint?`<div class="hint">${hint}</div>`:""}</span>
     </label>`;
-  // 每区独立保存按钮
-  const saveBtn = zone=>`<div class="sec" style="display:flex;justify-content:flex-end;gap:8px">
+  // 每区独立保存按钮（带脏状态标记，bind 时启用追踪）
+  const saveBtn = zone=>`<div class="savebar">
+    <span class="dirty-hint" data-dirtyhint="${zone}" style="display:none">有未保存的更改</span>
     <button class="primary sm" data-save="${zone}">保存本区</button></div>`;
   return `
   <div class="card" data-zone="scenario">
@@ -68,7 +100,7 @@ export function viewSettings(){
       <div><label>内容判定</label>
         <select id="s_scan"><option value="1" ${ai.content_scan?"selected":""}>开启</option><option value="0" ${!ai.content_scan?"selected":""}>关闭（最保守）</option></select>
         <div class="hint">开启后才会读「画一张…」这类措辞；agent 请求（带 tools）不走内容判定</div></div>
-      ${fld("s_conf","内容判定阈值", ai.min_confidence??0.6,"number","越高越保守")}
+      ${fld("s_conf","内容判定阈值", ai.min_confidence??0.6,"number","0~1，越高越保守")}
       ${fld("s_isize","生图默认尺寸", ai.default_image_size||"1K","text","上游只接受 1K/2K/3K/4K 或 WIDTHxHEIGHT")}
       ${fld("s_ifield","图生图输入图字段名", ai.image_input_field||"image","text","")}
       ${fld("s_vfield","图生视频输入图字段名", ai.video_input_field||"image","text","")}
@@ -97,27 +129,37 @@ export function viewSettings(){
   </div>
 
   <div class="card" data-zone="throttle">
-    <div class="card-head"><h2>节流与排队</h2><span class="grow"></span><span class="desc">RPM / 队列 / 并发 / 熔断</span></div>
+    <div class="card-head"><h2>节流与排队</h2><span class="grow"></span><span class="desc">按语义分三组：限流退让 / 队列形态 / 熔断保护</span></div>
     <div style="padding:14px 16px">
-    <div class="grid g2">
-      ${fld("s_safety","安全阀系数", s.safety_factor??0.9,"number","有效 RPM = 标称 × 安全阀 × 校准")}
-      ${fld("s_window","节拍窗口（秒）", s.pacing_window_sec??60,"number","生产保持 60")}
-      <div><label>自适应校准</label><select id="s_cal">
-        <option value="1" ${s.calibration_enabled?"selected":""}>开启</option><option value="0" ${!s.calibration_enabled?"selected":""}>关闭</option></select>
-        <div class="hint">吃 429 反馈自动下调（账号 × 池）节拍</div></div>
-      ${fld("s_penalty","429 冷阱时长（秒）", s.penalty_cooldown_sec??65)}
-      ${fld("s_pfactor","每次 429 的降幅系数", s.penalty_factor??0.8)}
-      ${fld("s_floor","校准下限", s.min_learned_factor??0.5)}
-      ${fld("s_recover","回升所需连续成功次数", s.recover_successes??20,"number","按成功次数回升，不按墙钟")}
-      ${fld("s_qwait","单请求最长排队（毫秒）", s.queue_max_wait_ms??120000)}
-      ${fld("s_qsize","每池最大排队人数", s.queue_max_size??200)}
-      ${fld("s_keep","流式心跳间隔（毫秒）", s.keepalive_interval_ms??5000)}
-      ${fld("s_imconc","图片并发上限", s.image_concurrency??4)}
-      ${fld("s_vconc","视频在任务上限", s.video_max_inflight??2,"number","独立于 RPM 的任务级限制")}
-      ${fld("s_brev","熔断自动复活（秒）", s.breaker_revive_sec??1800,"number","401/403/402 熔断后定时复活试探")}
-      ${fld("s_rqtimeout","请求超时（毫秒）", s.request_timeout_ms??30000,"number","防 hang 死连接")}
-      ${fld("s_free_text_rpm","agnes 免费档文本 RPM", s.free_text_rpm??10,"number","per-account 的 rpm_overrides 优先此值")}
-    </div>
+    <fieldset class="fieldset"><legend>① 限流退让（429 后怎么降速）</legend>
+      <div class="grid g2">
+        ${fld("s_safety","安全阀系数", s.safety_factor??0.9,"number","0.1~1 · 有效 RPM = 标称 × 安全阀 × 校准")}
+        ${fld("s_window","节拍窗口（秒）", s.pacing_window_sec??60,"number","10~600 · 生产保持 60")}
+        <div><label>自适应校准</label><select id="s_cal">
+          <option value="1" ${s.calibration_enabled?"selected":""}>开启</option><option value="0" ${!s.calibration_enabled?"selected":""}>关闭</option></select>
+          <div class="hint">吃 429 反馈自动下调（账号 × 池）节拍</div></div>
+        ${fld("s_penalty","429 冷阱时长（秒）", s.penalty_cooldown_sec??65,"number","命中 429 后账号冷却多久")}
+        ${fld("s_pfactor","每次 429 的降幅系数", s.penalty_factor??0.8,"number","0.1~1 · 越小降得越狠")}
+        ${fld("s_floor","校准下限", s.min_learned_factor??0.5,"number","0.05~1 · 自适应最低降到标称的几成")}
+        ${fld("s_recover","回升所需连续成功次数", s.recover_successes??20,"number","按成功次数回升，不按墙钟")}
+        ${fld("s_free_text_rpm","agnes 免费档文本 RPM", s.free_text_rpm??10,"number","per-account 的 rpm_overrides 优先此值")}
+      </div>
+    </fieldset>
+    <fieldset class="fieldset sec"><legend>② 队列形态（请求怎么排队）</legend>
+      <div class="grid g2">
+        ${fld("s_qwait","单请求最长排队（毫秒）", s.queue_max_wait_ms??120000,"number","超时即失败透传")}
+        ${fld("s_qsize","每池最大排队人数", s.queue_max_size??200,"number","超出直接拒绝")}
+        ${fld("s_keep","流式心跳间隔（毫秒）", s.keepalive_interval_ms??5000,"number","SSE 注释行防断连")}
+        ${fld("s_imconc","图片并发上限", s.image_concurrency??4,"number","全局同时在途生图数")}
+        ${fld("s_vconc","视频在任务上限", s.video_max_inflight??2,"number","独立于 RPM 的任务级限制")}
+        ${fld("s_rqtimeout","请求超时（毫秒）", s.request_timeout_ms??30000,"number","防 hang 死连接")}
+      </div>
+    </fieldset>
+    <fieldset class="fieldset sec"><legend>③ 熔断保护（401/403 之后怎么办）</legend>
+      <div class="grid g2">
+        ${fld("s_brev","熔断自动复活（秒）", s.breaker_revive_sec??1800,"number","60~86400 · 熔断后定时复活试探")}
+      </div>
+    </fieldset>
     ${saveBtn("throttle")}
     </div>
   </div>
@@ -131,20 +173,20 @@ export function viewSettings(){
         <option value="key" ${s.affinity_mode==="key"?"selected":""}>仅按下游 Key</option>
         <option value="session" ${s.affinity_mode==="session"?"selected":""}>仅按会话头</option>
         <option value="none" ${s.affinity_mode==="none"?"selected":""}>不粘性（纯负载均衡）</option>
-      </select><div class="hint">绑定账号拥堵或冷却时自动改派并更新绑定</div></div>
+      </select><div class="hint">同一会话尽量落到同一账号，减少上下文切换</div></div>
       <div><label>站点优先级（401/403 自动换站）</label><select id="s_region">
         <option value="cn_first" ${s.region_priority==="cn_first"||!s.region_priority?"selected":""}>国内优先（401/403 自动切国际）</option>
         <option value="com_first" ${s.region_priority==="com_first"?"selected":""}>国际优先（401/403 自动切国内）</option>
         <option value="cn_only" ${s.region_priority==="cn_only"?"selected":""}>仅国内（不换站直接熔断）</option>
         <option value="com_only" ${s.region_priority==="com_only"?"selected":""}>仅国际（不换站直接熔断）</option>
         <option value="random" ${s.region_priority==="random"?"selected":""}>随机选择（401/403 自动切另一站）</option>
-      </select></div>
-      ${fld("s_tier","生图默认档位", s.default_image_tier||"1k","text")}
-      ${fld("s_retry","最大重试次数", s.retry_max??3,"number","生图/视频提交不参与 5xx 重试")}
-      ${fld("s_rbase","退避基数（毫秒）", s.retry_base_backoff_ms??500)}
-      ${fld("s_rmax","退避上限（毫秒）", s.retry_max_backoff_ms??8000)}
+      </select><div class="hint">账号在国内/国际两站各有一份凭据时可跨站续命</div></div>
+      ${fld("s_tier","生图默认档位", s.default_image_tier||"1k","text","1K/2K/3K/4K")}
+      ${fld("s_retry","最大重试次数", s.retry_max??3,"number","0~20 · 生图/视频提交不参与 5xx 重试")}
+      ${fld("s_rbase","退避基数（毫秒）", s.retry_base_backoff_ms??500,"number","首次重试等多久")}
+      ${fld("s_rmax","退避上限（毫秒）", s.retry_max_backoff_ms??8000,"number","指数退避的天花板")}
       ${fld("s_probe","探测模型", s.probe_model||"default-model","text","账号测试用的最小文本模型")}
-      ${fld("s_ttl","粘性绑定 TTL（小时）", s.session_ttl_hours??72)}
+      ${fld("s_ttl","粘性绑定 TTL（小时）", s.session_ttl_hours??72,"number","超时后绑定过期重新分配")}
     </div>
     ${saveBtn("route")}
     </div>
@@ -155,11 +197,11 @@ export function viewSettings(){
     <div style="padding:14px 16px">
     <div class="grid g2">
       <div><label>优化模式</label><select id="s_opt_mode">
-        <option value="serial" ${s.optimization_mode==="serial"?"selected":""}>串行 (Serial)</option>
-        <option value="concurrent_batch" ${s.optimization_mode==="concurrent_batch"?"selected":""}>并发批处理 (Concurrent Batch)</option>
-        <option value="concurrent_parallel" ${s.optimization_mode==="concurrent_parallel"?"selected":""}>并发并行 (Concurrent Parallel)</option>
-      </select></div>
-      ${fld("s_img_ret","图片记录保留天数", s.image_record_retention_days||30,"number","")}
+        <option value="serial" ${s.optimization_mode==="serial"?"selected":""}>串行 (Serial) · 逐个处理，最稳但最慢</option>
+        <option value="concurrent_batch" ${s.optimization_mode==="concurrent_batch"?"selected":""}>并发批处理 (Concurrent Batch) · 攒一批同时发，吞吐优先</option>
+        <option value="concurrent_parallel" ${s.optimization_mode==="concurrent_parallel"?"selected":""}>并发并行 (Concurrent Parallel) · 到一个发一个，延迟优先</option>
+      </select><div class="hint">个人低并发用串行即可；批量挂机选并发批处理</div></div>
+      ${fld("s_img_ret","图片记录保留天数", s.image_record_retention_days||30,"number","到期自动清理")}
       ${fld("s_img_cap","图库最大容量（条）", s.image_max_capacity||500,"number","0 = 不限制")}
       ${fld("s_vid_cap","视频库最大容量（条）", s.video_max_capacity||200,"number","0 = 不限制")}
     </div>
@@ -237,25 +279,99 @@ function zonePayload(zone){
   return p;
 }
 
+/* ---------- 脏状态追踪 + 校验（v2） ----------
+   每区维护 dirty 标志：控件 input/change 时点亮「有未保存的更改」+ 保存钮高亮；
+   保存前对本区数字输入跑 NUM_CONSTRAINTS 校验，越界行内提示并中止。 */
+const DIRTY = {}; // zone → bool
+function zoneOfCard(card){ return card ? card.dataset.zone : null; }
+function markDirty(zone){
+  DIRTY[zone] = true;
+  const hint = document.querySelector(`[data-dirtyhint="${zone}"]`);
+  if(hint) hint.style.display = "";
+  const btn = document.querySelector(`button[data-save="${zone}"]`);
+  if(btn){ btn.classList.add("accent"); btn.textContent = "保存本区 ●"; }
+}
+function clearDirty(zone){
+  DIRTY[zone] = false;
+  const hint = document.querySelector(`[data-dirtyhint="${zone}"]`);
+  if(hint) hint.style.display = "none";
+  const btn = document.querySelector(`button[data-save="${zone}"]`);
+  if(btn){ btn.classList.remove("accent"); btn.textContent = "保存本区"; }
+}
+function validateZone(zone){
+  const card = document.querySelector(`.card[data-zone="${zone}"]`);
+  if(!card) return true;
+  let okAll = true, firstBad = null;
+  card.querySelectorAll("input[type=number]").forEach(el=>{
+    const c = NUM_CONSTRAINTS[el.id];
+    if(!c || el.value==="") return;
+    const v = Number(el.value);
+    const tip = document.getElementById(el.id+"_cerr");
+    if(isNaN(v) || v<c.min || v>c.max){
+      okAll = false;
+      el.style.borderColor = "var(--bad)";
+      if(tip) tip.textContent = `${c.label}需在 ${c.min} ~ ${c.max} 之间`;
+      else { const t=document.createElement("div"); t.id=el.id+"_cerr"; t.className="field-err";
+        t.textContent=`${c.label}需在 ${c.min} ~ ${c.max} 之间`; el.insertAdjacentElement("afterend",t); }
+      if(!firstBad) firstBad = el;
+    } else {
+      el.style.borderColor = "";
+      if(tip) tip.remove();
+    }
+  });
+  if(firstBad) firstBad.focus();
+  return okAll;
+}
+function bindDirtyTracking(){
+  document.querySelectorAll(".card[data-zone]").forEach(card=>{
+    const zone = zoneOfCard(card);
+    if(!zone) return;
+    card.addEventListener("input", ev=>{
+      if(ev.target.matches("input,select,textarea")) markDirty(zone);
+    });
+    card.addEventListener("change", ev=>{
+      if(ev.target.matches("input,select,textarea")) markDirty(zone);
+    });
+  });
+  // 离开有未保存更改的页面时提示（SPA 内 hash 路由 + beforeunload 双保险）
+  window.addEventListener("beforeunload", (ev)=>{
+    if(Object.values(DIRTY).some(Boolean)){ ev.preventDefault(); ev.returnValue = ""; }
+  });
+}
+window.addEventListener("hashchange", ()=>{
+  const dirtyZone = Object.keys(DIRTY).find(z=>DIRTY[z]);
+  if(dirtyZone && !document.querySelector(`.card[data-zone="${dirtyZone}"]`)){
+    // 已经离开设置页且仍有脏区：提示（不阻塞，只是可见性提醒）
+    toast(`设置页「${dirtyZone}」区的更改尚未保存`,"warn");
+  }
+});
+
 export function bindSettingsEvents(){
-  // 分区保存：按钮 → 只 POST 本区字段
+  // 分区保存：校验 → POST 本区字段 → 清脏标记
   document.querySelectorAll("button[data-save]").forEach(b=>{
     b.onclick = async ()=>{
       const zone = b.dataset.save;
+      if(!validateZone(zone)){ toast("部分数值越界，已标红，请修正后再保存","bad"); return; }
       const payload = zonePayload(zone);
       b.disabled = true;
       try{
         await api("/api/settings",{method:"POST",body:JSON.stringify(payload)});
+        clearDirty(zone);
         toast("本区设置已保存并生效","good");
       }catch(e){ toast("保存失败："+e.message,"bad"); }
       finally{ b.disabled = false; }
     };
   });
+  bindDirtyTracking();
   // 导出：区分含/不含密钥（后端 /api/export?keys=0 脱敏）；含密钥需二次确认
   document.getElementById("btnExport").onclick = ()=>window.open("/api/export?keys=0","_blank");
-  document.getElementById("btnExportFull").onclick = ()=>{
-    if(!confirm("将导出含明文 API Key 的完整配置，确认继续？")) return;
-    window.open("/api/export","_blank");
+  document.getElementById("btnExportFull").onclick = async ()=>{
+    const ok = await confirmModal({
+      title:"导出含密钥的完整配置",
+      message:"导出文件包含所有账号的明文 API Key，请妥善保管，不要分享给不信任的人。",
+      confirmText:"继续导出",
+    });
+    if(ok) window.open("/api/export","_blank");
   };
   document.getElementById("btnExportCapture").onclick = ()=>window.open("/api/export/capture-analysis", "_blank");
   const applySc = document.getElementById("btnApplyScenario");
@@ -266,6 +382,7 @@ export function bindSettingsEvents(){
       // 只发 scenario（后端 ApplyScenario 覆写整套旋钮），保留账号级 RPM 覆盖。
       await api("/api/settings",{method:"POST",body:JSON.stringify({scenario:name})});
       toast(`已应用「${name}」情景并即时生效`,"good");
+      clearDirty("scenario");
       renderCurrent();
     }catch(e){ toast(e.message,"bad"); }
   };
@@ -277,6 +394,7 @@ export function bindSettingsEvents(){
       try{
         await api("/api/settings",{method:"POST",body:JSON.stringify({scenario:rec.name, auto_scenario:true})});
         toast(`已按推荐应用「${rec.name}」情景并开启自动检测`,"good");
+        clearDirty("scenario");
         renderCurrent();
       }catch(e){ toast(e.message,"bad"); }
     };
@@ -334,7 +452,15 @@ function importModal(){
   doBtn.onclick = async ()=>{
     if(!parsed) return;
     const mode = document.getElementById("impMode") ? document.getElementById("impMode").value : "append";
-    if(mode==="replace" && !confirm("替换模式会覆盖现有账号与设置，确认继续？")) return;
+    if(mode==="replace"){
+      const ok = await confirmModal({
+        title:"确认替换配置",
+        message:"替换模式会覆盖现有全部账号与网关设置，操作前建议先「导出含密钥」备份。",
+        confirmText:"确认替换",
+        danger:true,
+      });
+      if(!ok) return;
+    }
     doBtn.disabled = true;
     try{
       const body = Object.assign({}, parsed, {mode});

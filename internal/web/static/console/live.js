@@ -3,7 +3,7 @@
 import { api } from "./api.js";
 import { state } from "./state.js";
 import { esc } from "./ui.js";
-import { cssVar, emptyHint, drawLines, drawAccountBars, liveAccCols } from "./charts.js";
+import { cssVar, emptyHint, drawLines, drawAccountBars, liveAccCols, setupCanvas, inkColor } from "./charts.js";
 
 const LIVE = { timer:null, win:"60s", hist:null, meta:[] };
 function liveWantPoints(){ return LIVE.win==="30s"?30:(LIVE.win==="5m"?300:(LIVE.win==="1h"?360:60)); }
@@ -97,27 +97,67 @@ export function drawLive(){
      <div class="ro"><b style="color:var(--bad)">${last.r429_pm||0}</b><span>429/分</span></div>`;
 
   // ③ 多账号分配（动态直方图）
+  // 账号多（>20）且基本零参与时，逐账号直方图退化为 1px 竖线噪音墙——
+  // 降级为 Top8 堆叠横条 + 计数徽章：只看「谁在干活」，其余并入「其余 N 个」。
   const meta=LIVE.meta||[];
   const cols=liveAccCols(slice, meta);
-  drawAccountBars(cvA,meta,cols,events);
-  const sums=new Array(meta.length).fill(0);
-  for(const col of cols){ for(let i=0;i<meta.length;i++){ sums[i]+=(col[i]||0); } }
-  const lt=sums.reduce((a,b)=>a+b,0)||0;
-  // 图例降噪：账号多时只展示有消耗的账号 + 「其余 N 个 0%」收敛项，避免图例墙
-  const LEGEND_MAX = 12;
-  const order = meta.map((m,i)=>({m,i,v:sums[i]||0}))
-    .sort((a,b)=>b.v-a.v);
-  const active = order.filter(x=>x.v>0);
-  const items = lt>0
-    ? (active.length<=LEGEND_MAX ? active : active.slice(0,LEGEND_MAX))
-    : order.slice(0, LEGEND_MAX);
-  const restCount = meta.length - items.length;
-  let legendHtml = items.map(x=>{
-    const pct = lt>0 ? Math.round(x.v/lt*100) : 0;
-    return `<span class="lg"><i style="background:${x.m.color}"></i>${esc(x.m.name||x.m.id)} ${pct}%</span>`;
-  }).join("");
-  if(restCount>0) legendHtml += `<span class="lg" style="color:var(--muted)">+ 其余 ${restCount} 个账号${lt>0?"（0%）":""}</span>`;
-  document.getElementById("lgAcc").innerHTML = legendHtml || `<span class="muted" style="font-size:12px">还没有账号</span>`;
+  const sumsAll=new Array(meta.length).fill(0);
+  for(const col of cols){ for(let i=0;i<meta.length;i++){ sumsAll[i]+=(col[i]||0); } }
+  const totalAll = sumsAll.reduce((a,b)=>a+b,0)||0;
+  const DEGRADE = 20;
+  if(meta.length>DEGRADE && totalAll===0){
+    // 完全零流量：不画 51 根竖线，给空态说明
+    drawEmptyAcc(cvA, meta.length, events);
+    document.getElementById("lgAcc").innerHTML =
+      `<span class="muted" style="font-size:12px">${meta.length} 个账号就绪 · 窗口内暂无请求分配，有流量后此处展示 Top 账号占比</span>`;
+  } else if(meta.length>DEGRADE){
+    // 有流量但账号多：只取 Top8 参与账号渲染
+    const order = meta.map((m,i)=>({m,i,v:sumsAll[i]||0})).sort((a,b)=>b.v-a.v);
+    const top = order.slice(0,8).filter(x=>x.v>0);
+    const tmeta = top.map(x=>x.m);
+    const tcols = cols.map(col=>top.map(x=>col[x.i]||0));
+    drawAccountBars(cvA, tmeta, tcols, events);
+    const lt = top.reduce((a,x)=>a+x.v,0)||1;
+    document.getElementById("lgAcc").innerHTML = top.map(x=>
+      `<span class="lg"><i style="background:${x.m.color}"></i>${esc(x.m.name||x.m.id)} ${Math.round(x.v/lt*100)}%</span>`
+    ).join("") + `<span class="lg" style="color:var(--muted)">其余 ${meta.length-top.length} 个账号 ${Math.round((totalAll-lt)/totalAll*100)}%</span>`;
+  } else {
+    drawAccountBars(cvA, meta, cols, events);
+    const sums=new Array(meta.length).fill(0);
+    for(const col of cols){ for(let i=0;i<meta.length;i++){ sums[i]+=(col[i]||0); } }
+    const lt=sums.reduce((a,b)=>a+b,0)||0;
+    // 图例降噪：账号多时只展示有消耗的账号 + 「其余 N 个 0%」收敛项，避免图例墙
+    const LEGEND_MAX = 12;
+    const order = meta.map((m,i)=>({m,i,v:sums[i]||0}))
+      .sort((a,b)=>b.v-a.v);
+    const active = order.filter(x=>x.v>0);
+    const items = lt>0
+      ? (active.length<=LEGEND_MAX ? active : active.slice(0,LEGEND_MAX))
+      : order.slice(0, LEGEND_MAX);
+    const restCount = meta.length - items.length;
+    let legendHtml = items.map(x=>{
+      const pct = lt>0 ? Math.round(x.v/lt*100) : 0;
+      return `<span class="lg"><i style="background:${x.m.color}"></i>${esc(x.m.name||x.m.id)} ${pct}%</span>`;
+    }).join("");
+    if(restCount>0) legendHtml += `<span class="lg" style="color:var(--muted)">+ 其余 ${restCount} 个账号${lt>0?"（0%）":""}</span>`;
+    document.getElementById("lgAcc").innerHTML = legendHtml || `<span class="muted" style="font-size:12px">还没有账号</span>`;
+  }
+}
+
+/* 零流量大账号池的空态：居中说明文字 + 底部事件刻度保留（429/熔断仍可见） */
+function drawEmptyAcc(cv, accCount, events){
+  const {ctx,w,h}=setupCanvas(cv);
+  ctx.globalAlpha=.55; ctx.fillStyle=inkColor(); ctx.font="12px sans-serif"; ctx.textAlign="center";
+  ctx.fillText(`${accCount} 个账号就绪 · 窗口内暂无请求分配`, w/2, h/2);
+  ctx.globalAlpha=1;
+  // 底部事件刻度照常画（红=429 橙=熔断），账号多时它是唯一有信息量的信号
+  const n=(events||[]).length;
+  (events||[]).forEach((e,i)=>{
+    if(!e) return;
+    const x = w*0.08 + (n>1?(i/(n-1))*w*0.84 : 0);
+    ctx.fillStyle=(e&1)?cssVar("--bad","#d64545"):cssVar("--warn","#e08a1e");
+    ctx.fillRect(x-1, h-14, 2, 6);
+  });
 }
 
 async function liveTick(){
@@ -141,7 +181,13 @@ function startLiveTimer(){
       const cv=document.getElementById("cvAcc");
       if(cv && LIVE.meta && LIVE.meta.length && LIVE.hist){
         const sl=(LIVE.hist.points||[]).slice(-liveWantPoints());
-        drawAccountBars(cv, LIVE.meta, liveAccCols(sl, LIVE.meta), sl.map(p=>p.events||0));
+        const meta=LIVE.meta;
+        if(meta.length>20){
+          // 降级模式下也走同一张画布；缓动只在有流量时有意义，零流量不重绘
+          if(drawAccountBars.moving) drawLive();
+        } else {
+          drawAccountBars(cv, meta, liveAccCols(sl, meta), sl.map(p=>p.events||0));
+        }
       }
     }
     LIVE.barRaf=requestAnimationFrame(loop);

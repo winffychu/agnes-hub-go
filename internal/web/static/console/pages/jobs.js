@@ -1,7 +1,7 @@
-// 视频任务页:job_id → video_id 映射表。
+// 视频任务页:job_id → video_id 映射表。清空/删除走 confirmModal（带数量/ID 明细）。
 import { api } from "../api.js";
 import { state } from "../state.js";
-import { esc, emptyBlock } from "../ui.js";
+import { esc, emptyBlock, toast, confirmModal } from "../ui.js";
 import { icon } from "../icons.js";
 import { renderCurrent } from "../app.js";
 
@@ -33,14 +33,29 @@ export function viewJobs(){
 export function bindJobs(){
   const view = document.getElementById("view");
   view.querySelectorAll("button[data-del]").forEach(x=>x.onclick=async ()=>{
+    const ok = await confirmModal({
+      title:"删除任务记录",
+      message:"仅删除本条映射记录，不影响上游已提交的视频任务。",
+      detail:[`job_id：${x.dataset.del}`],
+      confirmText:"删除",
+      danger:true,
+    });
+    if(!ok) return;
     try{ await api("/api/video-jobs/"+encodeURIComponent(x.dataset.del),{method:"DELETE"}); renderCurrent(); }
-    catch(e){ alert(e.message); }
+    catch(e){ toast(e.message,"bad"); }
   });
   const c = document.getElementById("btnClearJobs");
   if(c) c.onclick = async ()=>{
-    if(!confirm("清空全部视频任务记录？")) return;
+    const n = (state.jobs||[]).length;
+    const ok = await confirmModal({
+      title:"清空全部视频任务记录",
+      message:`将删除全部 ${n} 条 job_id → video_id 映射记录，上游任务本身不受影响。`,
+      confirmText:`清空 ${n} 条`,
+      danger:true,
+    });
+    if(!ok) return;
     try{ await api("/api/video-jobs/clear",{method:"POST"}); renderCurrent(); }
-    catch(e){ alert(e.message); }
+    catch(e){ toast(e.message,"bad"); }
   };
 }
 

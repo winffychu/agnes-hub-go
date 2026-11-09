@@ -21,6 +21,38 @@ export function openModal(html, opts={}){
 export function closeModal(){ const r = document.getElementById("modalRoot"); if(r) r.innerHTML = ""; }
 window.closeModal = closeModal;
 
+/* 确认弹窗（替代原生 confirm）：danger 红按钮 + 可选明细列表。
+   返回 Promise<boolean>；Escape/取消/背景点击 = false。
+   opts: {title, message, detail:[String], confirmText, danger} */
+export function confirmModal(opts){
+  return new Promise(resolve=>{
+    const items = (opts.detail||[]).map(x=>`<li>${esc(x)}</li>`).join("");
+    openModal(`
+    <div class="modal-back">
+      <div class="modal confirm-box">
+        <h2>${esc(opts.title||"确认操作")}</h2>
+        <div class="modal-sub">${esc(opts.message||"")}</div>
+        ${items?`<ul>${items}</ul>`:""}
+        <div style="margin-top:14px;display:flex;justify-content:flex-end;gap:8px">
+          <button data-close="1" id="btnCfCancel">取消</button>
+          <button class="${opts.danger?"danger":"primary"}" id="btnCfOk">${esc(opts.confirmText||"确认")}</button>
+        </div>
+      </div>
+    </div>`, {noFocus:false});
+    const done = v=>{ closeModal(); resolve(v); };
+    document.getElementById("btnCfOk").onclick = ()=>done(true);
+    document.getElementById("btnCfCancel").onclick = ()=>done(false);
+    // 背景/Escape 关闭（openModal 的委托只负责关弹窗，这里补 resolve(false)）
+    const root = document.getElementById("modalRoot");
+    root.addEventListener("click", ev=>{
+      if(ev.target.classList && ev.target.classList.contains("modal-back")) resolve(false);
+    }, {once:true});
+    document.addEventListener("keydown", ev=>{
+      if(ev.key==="Escape") resolve(false);
+    }, {once:true});
+  });
+}
+
 /* 模态关闭通路（绑一次，对所有弹窗生效）：
    1) 点击任何 [data-close] 元素（背景 / 取消按钮 / X 图标）
    2) Escape 键

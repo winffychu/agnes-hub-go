@@ -1,7 +1,7 @@
 // 系统页(版本自更新+运行环境)。about 无页面快照：更新状态在 bind 时拉一次。
 import { api } from "../api.js";
 import { state } from "../state.js";
-import { esc, num, toast, kpiCard } from "../ui.js";
+import { esc, num, toast, kpiCard, confirmModal } from "../ui.js";
 import { icon } from "../icons.js";
 
 export function viewAbout(){
@@ -72,7 +72,12 @@ export function bindAboutEvents(){
 
   document.getElementById("btnApply").onclick = async (ev)=>{
     const b = ev.currentTarget;
-    if(!confirm("确认下载并更新到最新版本？\n更新完成后程序会自动重启。")) return;
+    const ok = await confirmModal({
+      title:"更新到最新版本",
+      message:"更新会下载对应平台二进制并替换，完成后程序自动重启（约数秒不可用）。",
+      confirmText:"立即更新",
+    });
+    if(!ok) return;
     b.disabled = true; b.textContent = "更新中…";
     try{
       const r = await api("/api/update/apply",{method:"POST"});

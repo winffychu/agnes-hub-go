@@ -1,8 +1,10 @@
 // 账号池页:搜索/筛选/分页工具条 + tbody 事件委托 + 行操作收敛。
 // 弹窗走 ui.js 统一关闭通路；表单带字段级校验与错误恢复。
+// v2：危险操作全部走 confirmModal（带账号名/数量明细）；批量操作
+// 「选范围→选动作→确认」三段式；行操作分主要(编辑)/次要(测试/toggle)/危险(删除红色)。
 import { api } from "../api.js";
 import { state, POOLS, MODALITIES, TYPES, DEFAULT_BASE_BY_TYPE } from "../state.js";
-import { esc, num, toast, openModal, closeModal, emptyBlock, setFieldError, clearFieldErrors } from "../ui.js";
+import { esc, num, toast, openModal, closeModal, confirmModal, emptyBlock, setFieldError, clearFieldErrors } from "../ui.js";
 import { icon } from "../icons.js";
 import { renderCurrent } from "../app.js";
 
@@ -33,7 +35,7 @@ function manifestEditor(id, manifest){
     <input id="${id}_${mod}" value="${esc((m[mod]||[]).join(", "))}" placeholder="例如 model-a, model-b"></div>`).join("");
 }
 
-function rowHtml(a){
+function rowHtml(a, idx){
   const eff = a.rpm_effective||{}, base = a.rpm_base||{};
   const rpm = POOLS.filter(p=>(base[p]||0)>0).map(p=>{
     const b = base[p], e = eff[p];
@@ -47,8 +49,7 @@ function rowHtml(a){
   return `<tr data-id="${esc(a.id)}">
     <td>
       <b>${esc(a.name)}</b> <span class="badge">${esc(a.access_type)}</span>${a.group?` <span class="badge info">${esc(a.group)}</span>`:""}
-      <div class="cell-sub mono">${esc(a.api_key_masked)}</div>
-      <div class="cell-sub" title="${esc(a.base_url)}">${esc(a.base_url)}</div>
+      <div class="cell-sub mono">${esc(a.api_key_masked)}${a.base_url?` · ${esc(a.base_url)}`:""}</div>
     </td>
     <td style="white-space:nowrap">${st.join(" ")}</td>
     <td>${rpm||'<span class="muted">—</span>'}</td>
@@ -58,11 +59,10 @@ function rowHtml(a){
     }).join("")||'<span class="muted">未声明</span>'}</td>
     <td class="num" style="white-space:nowrap">${num(a.stats?.requests)}<div class="cell-sub">错 ${num(a.stats?.errors)}</div></td>
     <td style="white-space:nowrap">
+      <button class="sm primary" data-act="edit" data-id="${esc(a.id)}">编辑</button>
       <button class="sm" data-act="test" data-id="${esc(a.id)}">测试</button>
-      <button class="sm" data-act="edit" data-id="${esc(a.id)}">编辑</button>
-      <button class="sm ghost icon-btn" data-act="toggle" data-id="${esc(a.id)}" data-on="${a.enabled?1:0}"
-        title="${a.enabled?"停用":"启用"}">${icon(a.enabled?"x":"play",13)}</button>
-      <button class="sm ghost icon-btn danger" data-act="del" data-id="${esc(a.id)}" title="删除">${icon("trash",13)}</button>
+      <button class="sm" data-act="toggle" data-id="${esc(a.id)}" data-on="${a.enabled?1:0}">${a.enabled?"停用":"启用"}</button>
+      <button class="sm ghost danger" data-act="del" data-id="${esc(a.id)}" data-name="${esc(a.name)}" title="删除">${icon("trash",13)} 删除</button>
     </td>
   </tr>`;
 }
@@ -70,6 +70,7 @@ function rowHtml(a){
 export function viewAccounts(){
   const all = (state.accounts&&state.accounts.accounts)||[];
   const groups = [...new Set(all.map(a=>a.group).filter(Boolean))];
+  const enabled = all.filter(a=>a.enabled).length;
   return `
   <div class="toolbar">
     <div style="position:relative;flex:1;min-width:180px;max-width:320px">
@@ -88,19 +89,13 @@ export function viewAccounts(){
     </select>
     <span class="muted" style="font-size:12px" id="accCount"></span>
     <span style="flex:1"></span>
-    <select id="bulkGroup" style="width:150px" title="批量启用/停用的目标分组">
-      <option value="">全部分组</option>
-      ${groups.map(g=>`<option value="${esc(g)}">${esc(g)}</option>`).join("")}
-    </select>
-    <select id="bulkOp" style="width:92px">
-      <option value="enable">全部启用</option><option value="disable">全部停用</option>
-    </select>
-    <button id="btnBulkUpdate">应用</button>
+    <button id="btnBulkMenu">${icon("layers",14)}批量操作</button>
     <button id="btnOpenBulk">${icon("upload",14)}导入</button>
     <button class="primary" id="btnOpenAdd">${icon("plus",14)}添加账号</button>
   </div>
   <div class="card">
-    <div class="card-head"><h2>账号列表</h2><span class="grow"></span><span class="desc">校准后 RPM = 标称 × 安全阀 × 429 自适应系数</span></div>
+    <div class="card-head"><h2>账号列表</h2><span class="grow"></span>
+      <span class="desc">${all.length} 个账号 · ${enabled} 启用 · 校准后 RPM = 标称 × 安全阀 × 429 自适应系数</span></div>
     <div class="tbl-wrap"><table>
       <thead><tr><th>账号</th><th>状态</th><th>各池有效 RPM</th><th>模型清单</th><th>请求</th><th>操作</th></tr></thead>
       <tbody id="accTbody"></tbody>
@@ -116,7 +111,7 @@ function paintRows(){
   const pages = Math.max(1, Math.ceil(accs.length/PAGE_SIZE));
   if(PAGER.page>pages) PAGER.page = pages;
   const slice = accs.slice((PAGER.page-1)*PAGE_SIZE, PAGER.page*PAGE_SIZE);
-  const rows = slice.map(rowHtml).join("");
+  const rows = slice.map((a,i)=>rowHtml(a,(PAGER.page-1)*PAGE_SIZE+i+1)).join("");
   const tb = document.getElementById("accTbody");
   if(!tb) return;
   tb.innerHTML = rows||`<tr><td colspan="6">${emptyBlock(all.length?"search":"users", all.length?"没有匹配筛选条件的账号":"暂无账号 · 点「添加账号」或「导入」开始")}</td></tr>`;
@@ -141,28 +136,82 @@ function paintRows(){
 export function bindAccountEvents(){
   document.getElementById("btnOpenAdd").onclick = ()=>accountFormModal(null);
   document.getElementById("btnOpenBulk").onclick = bulkImportModal;
+  document.getElementById("btnBulkMenu").onclick = bulkOpsModal;
   // 搜索/筛选：输入即筛并回第一页，只重绘表格行（不重建工具栏，避免丢焦点）
   const si = document.getElementById("accSearch");
   si.oninput = ()=>{ FILTER.q = si.value; PAGER.page = 1; paintRows(); };
   document.getElementById("accFStatus").onchange = e=>{ FILTER.status = e.target.value; PAGER.page = 1; paintRows(); };
   document.getElementById("accFGroup").onchange = e=>{ FILTER.group = e.target.value; PAGER.page = 1; paintRows(); };
-  document.getElementById("btnBulkUpdate").onclick = async ()=>{
-    const op = document.getElementById("bulkOp").value;
-    try{
-      const r = await api("/api/accounts/bulk-update",{method:"POST",body:JSON.stringify({
-        group:document.getElementById("bulkGroup").value.trim(), enabled: op==="enable"
-      })});
-      toast(`已更新 ${r.updated} / ${r.matched} 个账号`,"good"); renderCurrent();
-    }catch(e){ toast(e.message,"bad"); }
-  };
   // 行操作：tbody 级事件委托——重绘天然免疫，重复绑定问题根治
   const tb = document.getElementById("accTbody");
   tb.addEventListener("click", (ev)=>{
     const b = ev.target.closest("button[data-act]");
     if(!b) return;
-    accountAction(b.dataset.act, b.dataset.id, b.dataset.on);
+    accountAction(b.dataset.act, b.dataset.id, b.dataset.on, b.dataset.name);
   });
   paintRows();
+}
+
+/* ---------- 批量操作弹窗：范围 → 动作 → 确认明细（替代裸的「应用」直发） ---------- */
+function bulkOpsModal(){
+  const all = (state.accounts&&state.accounts.accounts)||[];
+  const groups = [...new Set(all.map(a=>a.group).filter(Boolean))];
+  openModal(`
+  <div class="modal-back">
+    <div class="modal confirm-box">
+      <h2>批量启用 / 停用</h2>
+      <div class="modal-sub">先选范围，再选动作；确认后会列出受影响账号数</div>
+      <label>目标范围</label>
+      <select id="bkGroup">
+        <option value="">全部账号（${all.length} 个）</option>
+        ${groups.map(g=>`<option value="${esc(g)}">${esc(g)}（${all.filter(a=>(a.group||"")===g).length} 个）</option>`).join("")}
+      </select>
+      <label style="margin-top:10px">执行动作</label>
+      <select id="bkOp">
+        <option value="enable">全部启用</option>
+        <option value="disable">全部停用</option>
+      </select>
+      <div id="bkPreview" style="margin-top:10px"></div>
+      <div style="margin-top:14px;display:flex;justify-content:flex-end;gap:8px">
+        <button data-close="1">取消</button>
+        <button class="primary" id="btnBkNext">下一步</button>
+      </div>
+    </div>
+  </div>`);
+  document.getElementById("btnBkNext").onclick = ()=>{
+    const group = document.getElementById("bkGroup").value;
+    const op = document.getElementById("bkOp").value;
+    const targets = all.filter(a=>group==="" || (a.group||"")===group);
+    if(!targets.length){ toast("该范围内没有账号","warn"); return; }
+    const toChange = targets.filter(a=>op==="enable" ? !a.enabled : a.enabled);
+    bulkConfirm(targets, toChange, group, op);
+  };
+}
+async function bulkConfirm(targets, toChange, group, op){
+  const scopeName = group===""?"全部账号":`分组「${group}」`;
+  const enableOp = op==="enable";
+  const lines = [
+    `范围：${scopeName}，共 ${targets.length} 个账号`,
+    `其中 ${toChange.length} 个将被${enableOp?"启用":"停用"}`,
+  ];
+  if(!enableOp && toChange.length>0){
+    const names = toChange.slice(0,8).map(a=>a.name||a.id);
+    lines.push("将停用：" + names.join("、") + (toChange.length>8?` 等 ${toChange.length} 个`:""));
+  }
+  const ok = await confirmModal({
+    title: enableOp?"确认批量启用":"确认批量停用",
+    message: enableOp?"启用后账号立即参与调度。":"停用后这些账号不再接任何请求，进行中的请求不受影响。",
+    detail: lines,
+    confirmText: `${enableOp?"启用":"停用"} ${toChange.length} 个账号`,
+    danger: !enableOp,
+  });
+  if(!ok) return;
+  try{
+    const r = await api("/api/accounts/bulk-update",{method:"POST",body:JSON.stringify({
+      group, enabled: enableOp
+    })});
+    toast(`已${enableOp?"启用":"停用"} ${r.updated} / ${r.matched} 个账号`,"good"); renderCurrent();
+  }catch(e){ toast(e.message,"bad"); }
 }
 
 /* ---------- 两步表单（添加 / 编辑共用骨架） ----------
@@ -308,7 +357,7 @@ function testResultModal(r){
   </div>`);
 }
 
-async function accountAction(act,id,on){
+async function accountAction(act,id,on,name){
   try{
     if(act==="test"){
       toast("正在测试…（向上游发一个最小请求）","warn");
@@ -323,7 +372,17 @@ async function accountAction(act,id,on){
       toast(acc&&acc.enabled?"已启用":"已停用","good");
       return;
     }
-    if(act==="del"){ if(!confirm("确认删除该账号？")) return; await api("/api/accounts/"+id,{method:"DELETE"}); }
+    if(act==="del"){
+      const ok = await confirmModal({
+        title:"删除账号",
+        message:"删除后该账号从账号池移除，配置不可恢复（密钥需重新填写）。",
+        detail:[`账号：${name||id}`],
+        confirmText:"确认删除",
+        danger:true,
+      });
+      if(!ok) return;
+      await api("/api/accounts/"+id,{method:"DELETE"});
+    }
     if(act==="edit"){
       const acc = ((state.accounts&&state.accounts.accounts)||[]).find(x=>x.id===id); if(!acc) return;
       accountFormModal(acc);

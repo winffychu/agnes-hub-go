@@ -42,11 +42,18 @@ func (s *Server) consoleRoutes() {
 			http.Error(w, "console index missing", http.StatusInternalServerError)
 			return
 		}
+		// 版本号注入：{{.Version}} 替换为当前构建版本，前端据此做陈旧模块检测
+		ver := s.Version
+		if ver == "" {
+			ver = "dev"
+		}
+		html := strings.ReplaceAll(string(data), "{{.Version}}", ver)
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		w.Header().Set("Content-Length", fmt.Sprint(len(data)))
+		w.Header().Set("Content-Length", fmt.Sprint(len(html)))
 		w.Header().Set("Cache-Control", "no-cache")
+		w.Header().Set("X-App-Version", ver)
 		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write(data)
+		_, _ = w.Write([]byte(html))
 	}
 	m.HandleFunc("GET /{$}", serveIndex)
 	m.HandleFunc("GET /console", serveIndex)
