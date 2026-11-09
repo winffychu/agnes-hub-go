@@ -29,33 +29,45 @@ var version = "1.0.39"
 
 ---
 
-## 2. 标准发版流程(推荐)
+## 2. 标准发版流程(全自动,默认无需任何人工步骤)
+
+**push 即发版**:向 master 推送代码后,`.github/workflows/release.yml` 自动完成
+版本决定、校验、构建、发布、推镜像——不需要手动打 tag。
+
+自动流程(`prepare → release → docker` 三个 job):
+
+1. **prepare**:解析 main.go 的 `var version` → 决定本次发版号:
+   - tag 不存在 → 在当前提交打 tag;
+   - tag 已存在且指向当前提交 → 跳过(无新版本,幂等);
+   - tag 已存在但指向旧提交(改了代码没 bump)→ **自动 patch+1、改 main.go、
+     提交(github-actions[bot])并打新 tag**,零人工。
+2. **release**:checkout 该 tag → `go vet` + `go test -count=1`(发布前校验)→
+   三平台构建 + 架构自检(file 读 ELF/PE 头)→ Windows zip + fpk →
+   创建 Release 并上传 5 资产(Release 已存在则 `--clobber` 覆盖上传,重跑幂等)。
+3. **docker**:`release` 成功后 buildx 多架构构建并推 ghcr.io(`{version}` + `latest`)。
+
+注意事项:
+
+- 纯文档变更(`docs/**`、`**/*.md`、`.workbuddy/**`)不触发发版(paths-ignore);
+- 自动 bump 的提交由 bot 推送,GITHUB_TOKEN 不会再触发工作流,无自我循环;
+- 手动重跑:Actions 页 `Release` → `Run workflow`(workflow_dispatch)。
+
+<details><summary>手动发版(备用,通常不需要)</summary>
 
 ```bash
-# 1) 改版本号
-#    编辑 main.go: var version = "1.0.40"
-
-# 2) 本地自检(与 CI 完全一致的命令)
-go vet ./...
-go test ./... -count=1
-
-# 3) 提交并推送
-git add main.go
-git commit -m "v1.0.40: <一句话说明>"
+# 1) 编辑 main.go: var version = "1.0.42"
+# 2) 本地自检(与 CI 完全一致)
+go vet ./... && go test ./... -count=1
+# 3) 提交推送 + 打同名 tag
+git add main.go && git commit -m "v1.0.42: <一句话说明>"
 git push origin master
-
-# 4) 打 tag 并推送 —— 这一步会触发 .github/workflows/release.yml
-git tag -a v1.0.40 -m "v1.0.40"
-git push origin v1.0.40
+git tag v1.0.42 && git push origin v1.0.42   # tag push 也会触发 release(旧触发器已移除,
+                                              # 若手动打 tag 请改走 workflow_dispatch 或直接推送 master)
 ```
 
-推 tag 之后:
+</details>
 
-1. `release` job 先做**版本闸门**(见第 3 节),不一致直接 fail,什么都不会发。
-2. 通过后三平台构建 → 打包 5 个资产 → 创建 Release。
-3. `docker` job 在 `release` 成功后,构建并推送多架构镜像到 ghcr.io。
-
-在 GitHub 的 **Actions** 页可实时查看进度;产物出现在 **Releases** 页。
+流程进行中可在 GitHub 的 **Actions** 页实时查看;产物出现在 **Releases** 页。
 
 ### Release 正文从哪里来
 

@@ -145,9 +145,7 @@ func (s *Server) routes() {
 	m.HandleFunc("POST /v1/chat/completions", func(w http.ResponseWriter, r *http.Request) {
 		s.handleTextish(w, r, "/v1/chat/completions")
 	})
-	m.HandleFunc("POST /v1/responses", func(w http.ResponseWriter, r *http.Request) {
-		s.handleTextish(w, r, "/v1/responses")
-	})
+	m.HandleFunc("POST /v1/responses", s.handleResponsesUnsupported)
 	m.HandleFunc("POST /v1/messages", func(w http.ResponseWriter, r *http.Request) {
 		s.handleTextish(w, r, "/v1/messages")
 	})
@@ -158,6 +156,8 @@ func (s *Server) routes() {
 		s.handleMedia(w, r, "/v1/videos", intent.Video)
 	})
 	m.HandleFunc("GET /v1/videos/{job_id}", s.handleVideoPoll)
+	m.HandleFunc("GET /v1/videos", s.handleVideoList)
+	m.HandleFunc("DELETE /v1/videos/{job_id}", s.handleVideoDelete)
 	m.HandleFunc("GET /agnesapi", s.handleAgnesAPI)
 
 	// 干跑判定：不消耗任何配额，便于联调与排障（也能被控制台调用）
@@ -190,6 +190,56 @@ func writeErr(w http.ResponseWriter, e *apiError) {
 		payload["error"].(map[string]any)["code"] = e.Code
 	}
 	writeJSON(w, e.Status, payload, e.Headers)
+}
+
+// writeErrFor 按请求协议输出错误体：Anthropic 路径(/v1/messages)用 Anthropic
+// 错误结构,其余(OpenAI 系)用 OpenAI 错误结构——两家 SDK 的错误解析各自依赖
+// 自家结构,混用会导致客户端只能显示 "HTTP 400" 而非真实原因。
+func writeErrFor(w http.ResponseWriter, path string, e *apiError) {
+	if path == "/v1/messages" {
+		writeAnthropicErr(w, e)
+		return
+	}
+	writeErr(w, e)
+}
+
+// writeAnthropicErr 输出 Anthropic 错误结构:{"type":"error","error":{"type","message"}}。
+func writeAnthropicErr(w http.ResponseWriter, e *apiError) {
+	typ := "invalid_request_error"
+	switch {
+	case e.Status == http.StatusUnauthorized:
+		typ = "authentication_error"
+	case e.Status == http.StatusForbidden:
+		typ = "permission_error"
+	case e.Status == http.StatusNotFound:
+		typ = "not_found_error"
+	case e.Status == http.StatusTooManyRequests:
+		typ = "rate_limit_error"
+	case e.Status >= 500:
+		typ = "api_error"
+	}
+	writeJSON(w, e.Status, map[string]any{
+		"type":  "error",
+		"error": map[string]any{"type": typ, "message": e.Message},
+	}, e.Headers)
+}
+
+// handleResponsesUnsupported 明确拒绝 OpenAI Responses API。
+// 上游没有可用的 Responses 端点(实测要求 input 且返回 500 bad_response_body),
+// 透传只会把上游 500 原样漏给客户端。返回 501 + 明确指引,比"看似支持实则必败"
+// 更利于客户端排障。若上游将来提供该端点,删除本 handler 并恢复 handleTextish 即可。
+func (s *Server) handleResponsesUnsupported(w http.ResponseWriter, r *http.Request) {
+	if _, e := s.downstreamKey(r); e != nil {
+		writeErr(w, e)
+		return
+	}
+	writeErr(w, &apiError{
+		Status: http.StatusNotImplemented,
+		Type:   "invalid_request_error",
+		Code:   "unsupported_endpoint",
+		Message: "网关不代理 /v1/responses(上游无此端点);" +
+			"请改用 /v1/chat/completions(OpenAI 兼容)或 /v1/messages(Anthropic 兼容)",
+	})
 }
 
 func writeJSON(w http.ResponseWriter, status int, payload any, headers map[string]string) {
@@ -649,12 +699,12 @@ func (s *Server) decideCached(path string, body map[string]any, requested string
 func (s *Server) handleTextish(w http.ResponseWriter, r *http.Request, path string) {
 	item, e := s.downstreamKey(r)
 	if e != nil {
-		writeErr(w, e)
+		writeErrFor(w, path, e)
 		return
 	}
 	body, rawBody, e := readBody(r)
 	if e != nil {
-		writeErr(w, e)
+		writeErrFor(w, path, e)
 		return
 	}
 	settings := s.Store.SettingsSnapshot()
@@ -701,7 +751,7 @@ func (s *Server) handleTextish(w http.ResponseWriter, r *http.Request, path stri
 		poolClass = pool.Classify(requested, body, settings.ModelAliases, settings.DefaultImageTier)
 	}
 	if e := s.gate(item, poolClass); e != nil {
-		writeErr(w, e)
+		writeErrFor(w, path, e)
 		return
 	}
 
@@ -710,7 +760,7 @@ func (s *Server) handleTextish(w http.ResponseWriter, r *http.Request, path stri
 	if intent.IsAutoModel(requested) || requested == "" {
 		model, e := s.resolveAutoModel(settings, intent.Text)
 		if e != nil {
-			writeErr(w, e)
+			writeErrFor(w, path, e)
 			return
 		}
 		requiredModel = model
@@ -1064,6 +1114,22 @@ func (s *Server) serveAutoVideo(w http.ResponseWriter, r *http.Request, item *co
 			payload["video_id"] = videoID
 		}
 		payload["poll_url"] = jobInfo["poll_url"]
+		// OpenAI 视频对象的基础键（缺失才补，不覆盖上游同名字段）
+		if _, ok := payload["id"]; !ok {
+			payload["id"] = job.JobID
+		}
+		if _, ok := payload["object"]; !ok {
+			payload["object"] = "video"
+		}
+		if _, ok := payload["status"]; !ok {
+			payload["status"] = "submitted"
+		}
+		if _, ok := payload["model"]; !ok {
+			payload["model"] = result.ModelUsed
+		}
+		if _, ok := payload["created_at"]; !ok {
+			payload["created_at"] = int64(job.CreatedAt)
+		}
 		writeJSON(w, result.Status, payload, extra)
 		return
 	}
@@ -1182,9 +1248,70 @@ func (s *Server) handleVideoPoll(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, &apiError{Status: 502, Type: "upstream_error", Message: "轮询上游失败"})
 		return
 	}
+	if _, ok := data["id"]; !ok {
+		data["id"] = job.JobID
+	}
+	if _, ok := data["object"]; !ok {
+		data["object"] = "video"
+	}
+	if _, ok := data["created_at"]; !ok {
+		data["created_at"] = int64(job.CreatedAt)
+	}
+	if _, ok := data["model"]; !ok && job.Model != "" {
+		data["model"] = job.Model
+	}
 	data["job_id"] = job.JobID
 	data["video_id"] = job.VideoID
 	writeJSON(w, 200, data, nil)
+}
+
+// videoObject 把内部任务记录映射成 OpenAI 视频对象的公共字段。
+// 上游字段原样保留(附加字段对 OpenAI SDK 无害),这里补齐 SDK 依赖的基础键。
+func videoObject(j *config.VideoJob) map[string]any {
+	obj := map[string]any{
+		"id":         j.JobID,
+		"object":     "video",
+		"status":     j.Status,
+		"model":      j.Model,
+		"created_at": int64(j.CreatedAt),
+	}
+	if j.VideoID != "" {
+		obj["video_id"] = j.VideoID
+	}
+	return obj
+}
+
+// handleVideoList 列出网关侧视频任务(OpenAI 视频 API:GET /v1/videos)。
+func (s *Server) handleVideoList(w http.ResponseWriter, r *http.Request) {
+	if _, e := s.downstreamKey(r); e != nil {
+		writeErr(w, e)
+		return
+	}
+	jobs := s.Store.JobsSnapshot()
+	data := make([]map[string]any, 0, len(jobs))
+	for _, j := range jobs {
+		data = append(data, videoObject(j))
+	}
+	writeJSON(w, 200, map[string]any{"object": "list", "data": data}, nil)
+}
+
+// handleVideoDelete 删除网关侧任务记录(OpenAI 视频 API:DELETE /v1/videos/{id})。
+// 只删本地记录,不取消上游已提交的生成任务。
+func (s *Server) handleVideoDelete(w http.ResponseWriter, r *http.Request) {
+	if _, e := s.downstreamKey(r); e != nil {
+		writeErr(w, e)
+		return
+	}
+	id := r.PathValue("job_id")
+	if id == "" {
+		writeErr(w, badRequest("缺少 job_id"))
+		return
+	}
+	if !s.Store.DeleteVideoJob(id) {
+		writeErr(w, &apiError{Status: 404, Type: "invalid_request_error", Message: "未知的 job_id:" + id})
+		return
+	}
+	writeJSON(w, 200, map[string]any{"id": id, "object": "video.deleted", "deleted": true}, nil)
 }
 
 func (s *Server) handleAgnesAPI(w http.ResponseWriter, r *http.Request) {
@@ -1294,7 +1421,7 @@ func (s *Server) proxy(w http.ResponseWriter, r *http.Request, item *config.Down
 		result, err := relay.Do(ctx, s.Hub, s.Client, opts)
 		if err != nil {
 			s.logUsageError(item, decision, opts.PoolClass, opts.Path, false, nil, 0, 0, decision.Prompt.Text, 502, err.Error(), requestIDFrom(r))
-			writeErr(w, relayError(err))
+			writeErrFor(w, opts.Path, relayError(err))
 			return
 		}
 		raw := result.ReadAll()

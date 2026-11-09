@@ -534,12 +534,11 @@ docker compose logs -f
 
 发版流程详见 [docs/RELEASE.md](docs/RELEASE.md)，这里只说结论：
 
-- **唯一发版入口是打 tag**：`git tag -a v1.0.40 && git push origin v1.0.40`
-  触发 `.github/workflows/release.yml`，自动完成三平台构建、打包、
-  创建 Release 并推送容器镜像。
-- **版本闸门**：tag（去 `v` 前缀）必须与 `main.go` 的 `var version` 完全一致，
-  否则直接 fail，什么都不发 —— 防止「改了代码没 bump 版本就发 tag」把旧版
-  当新版推给用户。
+- **push 即发版**：向 master 推送代码即触发 `.github/workflows/release.yml`
+  自动完成版本决定（忘 bump 会自动 patch+1）、vet/test 校验、三平台构建、
+  创建 Release 并推送容器镜像——无需手动打 tag。
+- **版本单一来源**：`main.go` 的 `var version`；tag 与它绑定（不一致由
+  prepare 自动递增对齐），防「改了代码没 bump 版本」把旧版当新版推给用户。
 - 日常 CI（`.github/workflows/ci.yml`）在 push / PR 时跑 `go vet`、
   全量 `go test`、master 上的 `-race`，以及三平台交叉编译冒烟。
 

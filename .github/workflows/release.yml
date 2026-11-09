@@ -1,29 +1,40 @@
-# agnes-hub-go — 发版
+# agnes-hub-go — 自动发版
 #
-# 触发：push 形如 v1.2.3 的 tag。
+# 触发:push 到 master(仅文档变更不触发)+ 手动 workflow_dispatch。
 #
-# 两个 job：
-#   release — 校验 tag 与 main.go 版本一致（防「发旧版」事故的闸门）→ 三平台构建
-#             → 打包 5 个资产 → gh release create 上传
-#   docker  — needs: release（闸门过了才推镜像）→ buildx 多架构构建并推 ghcr.io
+# 设计:不再依赖人工打 tag。推送代码后自动完成:
+#   prepare — 解析 main.go 的 var version → 决定本次发版号:
+#               · tag 不存在             → 在当前提交打 tag
+#               · tag 已存在且指向当前提交 → 跳过(无新版本,幂等)
+#               · tag 已存在但指向旧提交  → 自动 patch+1、改 main.go、提交并打新 tag
+#   release — 版本自检 → go vet + go test(保留必要校验)→ 三平台构建 + 架构自检
+#             → Windows zip + fpk → 创建 Release 并上传 5 个资产
+#   docker  — needs: release(release 成功才推镜像)→ buildx 多架构推 ghcr.io
 #
-# 约定：tag 一律带 `v` 前缀（v1.2.3），main.go 里是无前缀的 1.2.3；
-#       比较前统一剥掉 `v`，资产名与镜像 tag 都用无前缀版本号。
+# 版本单一来源仍是 main.go 的 var version;tag 一律 `v` 前缀(v1.2.3)。
+# 自动 bump 的提交由 github-actions[bot] 推送;GITHUB_TOKEN 推送不会再触发工作流,
+# 因此不存在自我循环。
 name: Release
 
 on:
   push:
-    tags:
-      - 'v*'
+    branches:
+      - master
+    # 纯文档/工作区变更不发版(避免"改个 README 就发一版")。
+    paths-ignore:
+      - 'docs/**'
+      - '**/*.md'
+      - '.workbuddy/**'
+  workflow_dispatch:
 
-# 默认最小权限，job 内按需提权
+# 默认最小权限,job 内按需提权
 permissions:
   contents: read
 
-# 同一 tag 上的并发不取消：中断到一半会留下「Release 建了但资产不全」的半成品，
-# 比排队慢更糟。串行执行，后到的等前一个跑完。
+# 发版必须串行:两个并发 run 同时 bump/tag 会撞车。不取消进行中的 run,
+# 中断到一半会留下「Release 建了但资产不全」的半成品,比排队慢更糟。
 concurrency:
-  group: release-${{ github.ref }}
+  group: release-master
   cancel-in-progress: false
 
 env:
@@ -31,53 +42,110 @@ env:
 
 jobs:
   # ==========================================================================
-  # 1. 构建资产并创建 GitHub Release
+  # 0. 决定版本号与 tag(必要时自动 bump)
   # ==========================================================================
-  release:
-    name: release
+  prepare:
+    name: prepare
     runs-on: ubuntu-latest
     permissions:
-      contents: write   # 创建 Release + 上传资产
+      contents: write # 自动 bump 时需要 push 提交与 tag
     outputs:
-      version: ${{ steps.gate.outputs.version }}
+      version: ${{ steps.resolve.outputs.version }}
+      tag: ${{ steps.resolve.outputs.tag }}
+      skip: ${{ steps.resolve.outputs.skip }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          # 需要完整历史与全部 tag 才能判断 tag 指向、做 patch 递增
+          fetch-depth: 0
 
-      # ---- 版本闸门：tag 必须与 main.go 的 var version 完全一致 ----
-      # 防的是「改了代码没 bump 版本就发 tag」这类事故：二进制里嵌入的版本来自
-      # main.go，若两者不一致，用户的自更新会把「旧版本」当成新版推下去
-      #（历史上 1.0.3 的 exe 误发即此类）。
-      - name: Verify tag matches main.go version
-        id: gate
+      - name: Resolve version and tag
+        id: resolve
         run: |
           set -euo pipefail
-          tag="${GITHUB_REF_NAME}"
-          tag_ver="${tag#v}"
-          # grep 找不到时不能让它把整个 step 打断，先 || true 再自行报错
+
           main_ver="$(grep -oE 'var[[:space:]]+version[[:space:]]*=[[:space:]]*"[0-9]+\.[0-9]+\.[0-9]+"' main.go 2>/dev/null \
                       | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -n1 || true)"
           if [ -z "${main_ver}" ]; then
             echo "::error title=版本解析失败::无法从 main.go 解析 \`var version = \"x.y.z\"\`"
             exit 1
           fi
-          if [ "${tag_ver}" != "${main_ver}" ]; then
-            echo "::error title=版本不一致::tag ${tag} 与 main.go 的 version=${main_ver} 不一致，拒绝发版（请先 bump main.go 再重新打 tag）"
+
+          head_sha="$(git rev-parse HEAD)"
+          ver="${main_ver}"
+          tag="v${ver}"
+
+          if git rev-parse -q --verify "refs/tags/${tag}" >/dev/null; then
+            tag_sha="$(git rev-list -n1 "${tag}")"
+            if [ "${tag_sha}" = "${head_sha}" ]; then
+              echo "tag ${tag} 已指向当前提交(${head_sha:0:8}),本次无新版本,跳过发版"
+              echo "skip=true"      >> "$GITHUB_OUTPUT"
+              echo "version=${ver}" >> "$GITHUB_OUTPUT"
+              echo "tag=${tag}"     >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            # tag 已被旧提交占用 → 自动 patch+1,写回 main.go 并提交(零人工)
+            new_ver="$(echo "${ver}" | awk -F. '{printf "%s.%s.%d", $1, $2, $3+1}')"
+            echo "版本 ${ver} 的 tag 已存在且指向旧提交,自动递增到 ${new_ver}"
+            sed -i "s/var version = \"${ver}\"/var version = \"${new_ver}\"/" main.go
+            grep -q "var version = \"${new_ver}\"" main.go || { echo "::error title=bump 失败::main.go 版本号替换未生效"; exit 1; }
+            git config user.name  "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git commit -am "chore(release): v${new_ver}"
+            git push origin "HEAD:master"
+            ver="${new_ver}"
+            tag="v${new_ver}"
+          fi
+
+          # 版本自检:tag 必须与 main.go 一致(此刻二者同源,仍显式断言)
+          if [ "${tag#v}" != "${ver}" ]; then
+            echo "::error title=版本不一致::tag ${tag} 与 main.go=${ver} 不一致"
             exit 1
           fi
-          echo "版本校验通过：tag=${tag} == main.go=${main_ver}"
-          echo "version=${main_ver}" >> "$GITHUB_OUTPUT"
+
+          if ! git rev-parse -q --verify "refs/tags/${tag}" >/dev/null; then
+            git tag "${tag}"
+            git push origin "refs/tags/${tag}"
+            echo "已创建 tag ${tag} @ $(git rev-parse --short HEAD)"
+          fi
+
+          echo "skip=false"     >> "$GITHUB_OUTPUT"
+          echo "version=${ver}" >> "$GITHUB_OUTPUT"
+          echo "tag=${tag}"     >> "$GITHUB_OUTPUT"
+
+  # ==========================================================================
+  # 1. 校验 + 构建资产并创建 GitHub Release
+  # ==========================================================================
+  release:
+    name: release
+    needs: prepare
+    if: needs.prepare.outputs.skip != 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # 创建 Release + 上传资产
+    outputs:
+      version: ${{ needs.prepare.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare.outputs.tag }}
 
       - uses: actions/setup-go@v5
         with:
           go-version: '1.22'
-          # 零第三方依赖、无 go.sum，setup-go 的缓存键无从计算，必须关掉
+          # 零第三方依赖、无 go.sum,setup-go 的缓存键无从计算,必须关掉
           cache: false
 
-      # ---- 三平台构建：参数与 ci.yml / tools/release.py 保持一致 ----
-      # 产物名与 build_fpk.py 的输入约定一致（它在仓库根目录找这两个 ELF）。
+      # ---- 发布前校验:发出去的二进制必须是通过测试的代码 ----
+      - name: Vet and test
+        run: |
+          set -euxo pipefail
+          go vet ./...
+          go test ./... -count=1
+
+      # ---- 三平台构建:参数与 ci.yml / tools/release.py 保持一致 ----
+      # 产物名与 build_fpk.py 的输入约定一致(它在仓库根目录找这两个 ELF)。
       - name: Build binaries
-        env:
-          VERSION: ${{ steps.gate.outputs.version }}
         run: |
           set -euxo pipefail
           CGO_ENABLED=0 GOOS=linux   GOARCH=amd64 go build -trimpath -buildvcs=false -ldflags "-s -w" -o agnes-hub-go-linux-amd64 .
@@ -86,7 +154,7 @@ jobs:
           ls -l agnes-hub-go-linux-amd64 agnes-hub-go-linux-arm64 agnes-hub-go.exe
 
       # ---- 架构自检 ----
-      # GOARCH 写错时 go build 不报错，错版二进制要等用户下载运行才暴露。
+      # GOARCH 写错时 go build 不报错,错版二进制要等用户下载运行才暴露。
       # 在发布前用 file 读 ELF/PE 头把这道关补上。
       - name: Verify artifact architectures
         run: |
@@ -95,14 +163,14 @@ jobs:
           file agnes-hub-go-linux-amd64 | grep -q 'x86-64'
           file agnes-hub-go-linux-arm64 | grep -q 'aarch64'
           file agnes-hub-go.exe        | grep -q 'PE32+'
-          echo "架构校验通过：amd64 / arm64 / windows-amd64"
+          echo "架构校验通过:amd64 / arm64 / windows-amd64"
 
-      # ---- Windows 绿色版 zip：exe + bat + README.txt ----
-      # README.txt 由 tools/windows-readme.txt（UTF-8 模板）生成，与 tools/release.py 同源，
+      # ---- Windows 绿色版 zip:exe + bat + README.txt ----
+      # README.txt 由 tools/windows-readme.txt(UTF-8 模板)生成,与 tools/release.py 同源,
       # 两条链路打出来的 zip 内容一致。
       - name: Package Windows zip
         env:
-          VERSION: ${{ steps.gate.outputs.version }}
+          VERSION: ${{ needs.prepare.outputs.version }}
         run: |
           set -euxo pipefail
           mkdir -p winpkg dist
@@ -114,24 +182,25 @@ jobs:
           unzip -l "dist/agnes-hub-go-windows-${VERSION}.zip"
 
       # ---- 飞牛 fnOS fpk ----
-      # build_fpk.py 在仓库根目录读 agnes-hub-go-linux-amd64 / -arm64（上一步已产出），
-      # 输出 dist/agnes-hub-go-{version}.fpk。版本号同样取自 main.go，与 tag 一致。
-      # 注意用 python3：ubuntu runner 不保证有 `python` 这个别名。
+      # build_fpk.py 在仓库根目录读 agnes-hub-go-linux-amd64 / -arm64(上一步已产出),
+      # 输出 dist/agnes-hub-go-{version}.fpk。版本号取自 main.go,与 tag 一致。
+      # 注意用 python3:ubuntu runner 不保证有 `python` 这个别名。
       - name: Build fpk
         env:
-          VERSION: ${{ steps.gate.outputs.version }}
+          VERSION: ${{ needs.prepare.outputs.version }}
         run: |
           set -euxo pipefail
           python3 tools/build_fpk.py
           ls -l "dist/agnes-hub-go-${VERSION}.fpk"
 
       # ---- 创建 Release 并上传 5 个资产 ----
-      # gh 已预装于 ubuntu-latest；GITHUB_TOKEN 经 GH_TOKEN 传入。
-      # --verify-tag：tag 必须已存在，避免 gh 顺手在默认分支上新建一个同名 tag。
-      - name: Create GitHub Release
+      # gh 已预装于 ubuntu-latest;GITHUB_TOKEN 经 GH_TOKEN 传入。
+      # 若该 tag 的 Release 已存在(手动重跑),改为覆盖上传资产,保持幂等。
+      - name: Create or update GitHub Release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          VERSION: ${{ steps.gate.outputs.version }}
+          VERSION: ${{ needs.prepare.outputs.version }}
+          TAG: ${{ needs.prepare.outputs.tag }}
         run: |
           set -euxo pipefail
           if [ -f tools/release_notes.md ]; then
@@ -146,30 +215,32 @@ jobs:
             "dist/agnes-hub-go-windows-${VERSION}.zip"
             "agnes-hub-go.exe"
           )
-          gh release create "v${VERSION}" "${assets[@]}" \
-            --verify-tag \
-            --title "v${VERSION}" \
-            --notes-file "${RUNNER_TEMP}/notes.md"
+          if gh release view "${TAG}" >/dev/null 2>&1; then
+            echo "Release ${TAG} 已存在,覆盖上传资产"
+            gh release upload "${TAG}" "${assets[@]}" --clobber
+          else
+            gh release create "${TAG}" "${assets[@]}" \
+              --verify-tag \
+              --title "${TAG}" \
+              --notes-file "${RUNNER_TEMP}/notes.md"
+          fi
 
   # ==========================================================================
   # 2. 构建多架构容器镜像并推送 ghcr.io
   # ==========================================================================
   docker:
     name: docker
-    # 闸门过了（release 成功）才推镜像，避免版本不一致的 tag 污染 registry
-    needs: release
+    # release 成功才推镜像,避免半成品版本污染 registry。
+    # 同时 need prepare 以读取 tag/version 输出(needs 上下文只含声明的依赖)。
+    needs: [prepare, release]
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      packages: write   # 推送 ghcr.io
+      packages: write # 推送 ghcr.io
     steps:
       - uses: actions/checkout@v4
-
-      - name: Resolve version
-        id: ver
-        run: |
-          set -euo pipefail
-          echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+        with:
+          ref: ${{ needs.prepare.outputs.tag }}
 
       - name: Set up Buildx
         uses: docker/setup-buildx-action@v3
@@ -187,15 +258,15 @@ jobs:
           context: .
           platforms: linux/amd64,linux/arm64
           push: true
-          # 不可变版本 tag + latest。owner 取仓库属主（winffychu），ghcr 路径须全小写。
+          # 不可变版本 tag + latest。owner 取仓库属主(winffychu),ghcr 路径须全小写。
           tags: |
-            ghcr.io/${{ github.repository_owner }}/agnes-hub-go:${{ steps.ver.outputs.version }}
+            ghcr.io/${{ github.repository_owner }}/agnes-hub-go:${{ needs.release.outputs.version }}
             ghcr.io/${{ github.repository_owner }}/agnes-hub-go:latest
           labels: |
             org.opencontainers.image.title=agnes-hub-go
-            org.opencontainers.image.version=${{ steps.ver.outputs.version }}
+            org.opencontainers.image.version=${{ needs.release.outputs.version }}
             org.opencontainers.image.revision=${{ github.sha }}
             org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
-          # 层缓存走 GitHub Actions 缓存，二次构建显著加速
+          # 层缓存走 GitHub Actions 缓存,二次构建显著加速
           cache-from: type=gha
           cache-to: type=gha,mode=max
