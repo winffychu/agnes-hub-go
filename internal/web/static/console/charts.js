@@ -87,15 +87,16 @@ export function drawAccountBars(cv, meta, cols, events){
   const total=sums.reduce((a,b)=>a+b,0);
   const shares=sums.map(v=> total>0 ? v/total : 0);
 
-  // 缓动：当前显示值向目标值滑动（首帧直接对齐，避免从 0 长出来）
-  if(!LIVE.barCur || LIVE.barCur.length!==rows){ LIVE.barCur=shares.slice(); }
+  // 缓动：当前显示值向目标值滑动（首帧直接对齐，避免从 0 长出来）。
+  // 状态挂在函数自身属性上（barCur 当前值 / moving 是否仍在滑动），供 rAF 循环读取。
+  if(!drawAccountBars.barCur || drawAccountBars.barCur.length!==rows){ drawAccountBars.barCur=shares.slice(); }
   let moving=false;
   for(let k=0;k<rows;k++){
-    const d=shares[k]-LIVE.barCur[k];
-    if(Math.abs(d)>=0.001){ moving=true; LIVE.barCur[k]+=d*0.28; }
-    else { LIVE.barCur[k]=shares[k]; }
+    const d=shares[k]-drawAccountBars.barCur[k];
+    if(Math.abs(d)>=0.001){ moving=true; drawAccountBars.barCur[k]+=d*0.28; }
+    else { drawAccountBars.barCur[k]=shares[k]; }
   }
-  LIVE.barMoving=moving;
+  drawAccountBars.moving=moving;
 
   const peak=shares.reduce((a,b)=>Math.max(a,b),0);
   const xMax=Math.max(0.25, Math.min(1, Math.ceil((peak+0.02)*10)/10));
@@ -120,7 +121,7 @@ export function drawAccountBars(cv, meta, cols, events){
   ctx.textBaseline="middle";
   for(let k=0;k<rows;k++){
     const y=padT+rowH*(k+0.5);
-    const v=LIVE.barCur[k]||0;
+    const v=drawAccountBars.barCur[k]||0;
     const bw=v>0?Math.max(2, v/xMax*plotW):0;
 
     // 条形
@@ -159,8 +160,8 @@ export function drawAccountBars(cv, meta, cols, events){
 }
 
 
-export function liveAccCols(slice){
-  const meta=LIVE.meta||[];
+export function liveAccCols(slice, meta){
+  meta = meta||[];
   return slice.map(p=>{
     const byId={}; (p.acc||[]).forEach(a=>{ byId[a.id]=a.done_delta||0; });
     return meta.map(m=>byId[m.id]||0);

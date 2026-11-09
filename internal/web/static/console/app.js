@@ -1,72 +1,104 @@
-// 应用入口:hash 路由 + 侧栏/顶栏外壳 + 数据拉取。视觉遵循 index.html 设计系统。
+// 应用入口:hash 路由 + 外壳 + 按页按需加载。
+// 性能原则：每个页面只拉自己需要的接口；动作后局部刷新（不整页重绘）；顶部细进度条反馈。
 import { api } from "./api.js";
 import { state } from "./state.js";
-import { esc, num, toast, openModal, closeModal } from "./ui.js";
+import { num, toast, openModal, closeModal } from "./ui.js";
 import { cycleTheme, syncThemeIcon } from "./theme.js";
-import { viewOverview, bindOverview } from "./pages/overview.js";
-import { viewAccounts, bindAccountEvents } from "./pages/accounts.js";
-import { viewKeys, bindKeyEvents } from "./pages/keys.js";
-import { viewQueue, bindQueue } from "./pages/queue.js";
-import { viewJobs, bindJobs } from "./pages/jobs.js";
-import { viewLogs, bindLogs } from "./pages/logs.js";
-import { viewIntent, bindIntentEvents } from "./pages/intent.js";
-import { viewSettings, bindSettingsEvents } from "./pages/settings.js";
-import { viewAbout, bindAboutEvents } from "./pages/about.js";
+import { icon } from "./icons.js";
+import { viewOverview, bindOverview, loadOverview } from "./pages/overview.js";
+import { viewAccounts, bindAccountEvents, loadAccounts } from "./pages/accounts.js";
+import { viewKeys, bindKeyEvents, loadKeys } from "./pages/keys.js";
+import { viewQueue, bindQueue, loadQueue } from "./pages/queue.js";
+import { viewJobs, bindJobs, loadJobs } from "./pages/jobs.js";
+import { viewLogs, bindLogs, loadLogs } from "./pages/logs.js";
+import { viewIntent, bindIntentEvents, loadIntent } from "./pages/intent.js";
+import { viewSettings, bindSettingsEvents, loadSettings } from "./pages/settings.js";
+import { viewAbout, bindAboutEvents, loadAbout } from "./pages/about.js";
 
-export async function refresh(){
-  try{
-    const [stats, accounts, keys, logs, settings, jobs, bindings, scenarios] = await Promise.all([
-      api("/api/stats"), api("/api/accounts"), api("/api/keys"), api("/api/logs?limit=300"),
-      api("/api/settings"), api("/api/video-jobs"), api("/api/bindings"),
-      api("/api/scenarios").catch(()=>({scenarios:[]}))
-    ]);
-    state.stats = stats; state.accounts = accounts; state.keys = keys.keys||[];
-    state.logs = logs.logs||[]; state.settings = settings;
-    state.jobs = jobs.jobs||[]; state.bindings = bindings.bindings||[];
-    state.scenarios = scenarios.scenarios||[];
-    state.scenarioData = scenarios;
-    state.stats.queue = (await api("/api/queue")).queue||[];
-    updateSubline();
-    render();
-  }catch(e){
-    if(e.status===401){ renderLogin(false); return; }
-    toast(e.message,"bad");
+/* ---------------- 加载指示（细进度条，非阻塞） ---------------- */
+let barEl = null, barTimer = null;
+function progress(on){
+  if(!barEl){ barEl = document.createElement("div"); barEl.className = "loadbar"; document.body.appendChild(barEl); }
+  if(on){
+    clearTimeout(barTimer); barEl.className = "loadbar on";
+    barTimer = setTimeout(()=>{ barEl.className = "loadbar done"; }, 8000);
+  } else {
+    clearTimeout(barTimer); barEl.className = "loadbar done";
+    setTimeout(()=>{ if(barEl.className==="loadbar done") barEl.className = "loadbar"; }, 320);
   }
 }
 
+/* ---------------- 页面注册表：每页自带 loader ---------------- */
 const PAGES = {
-  overview:  { label:"总览",    icon:"📊", view:viewOverview,  bind:bindOverview },
-  accounts:  { label:"账号池",  icon:"👥", view:viewAccounts,  bind:bindAccountEvents },
-  keys:      { label:"下游密钥", icon:"🔑", view:viewKeys,     bind:bindKeyEvents },
-  queue:     { label:"队列",    icon:"⏳", view:viewQueue,     bind:bindQueue },
-  jobs:      { label:"视频任务", icon:"🎬", view:viewJobs,     bind:bindJobs },
-  intent:    { label:"意图测试", icon:"🧭", view:viewIntent,   bind:bindIntentEvents },
-  logs:      { label:"日志",    icon:"📄", view:viewLogs,      bind:bindLogs },
-  settings:  { label:"设置",    icon:"⚙️", view:viewSettings,  bind:bindSettingsEvents },
-  about:     { label:"系统",    icon:"ℹ️", view:viewAbout,     bind:bindAboutEvents },
+  overview:  { label:"总览",     icon:"activity",  view:viewOverview,  bind:bindOverview,  load:loadOverview },
+  queue:     { label:"队列",     icon:"hourglass", view:viewQueue,     bind:bindQueue,     load:loadQueue },
+  jobs:      { label:"视频任务", icon:"film",      view:viewJobs,      bind:bindJobs,      load:loadJobs },
+  logs:      { label:"日志",     icon:"file",      view:viewLogs,      bind:bindLogs,      load:loadLogs },
+  accounts:  { label:"账号池",   icon:"users",     view:viewAccounts,  bind:bindAccountEvents, load:loadAccounts },
+  keys:      { label:"下游密钥", icon:"key",       view:viewKeys,      bind:bindKeyEvents, load:loadKeys },
+  intent:    { label:"意图测试", icon:"compass",   view:viewIntent,    bind:bindIntentEvents, load:loadIntent },
+  settings:  { label:"设置",     icon:"settings",  view:viewSettings,  bind:bindSettingsEvents, load:loadSettings },
+  about:     { label:"系统",     icon:"info",      view:viewAbout,     bind:bindAboutEvents, load:loadAbout },
 };
+const GROUPS = [
+  ["监控", ["overview","queue","jobs","logs"]],
+  ["资源", ["accounts","keys","intent"]],
+  ["管理", ["settings","about"]],
+];
 
-function updateSubline(){
-  const sub = document.getElementById("subline");
-  if(!sub || !state.stats) return;
-  const m = state.stats.metrics||{};
-  sub.textContent = `账号 ${(state.stats.accounts||[]).length} · 请求 ${num(m.requests_total)} · 429 ${num(m.upstream_429)} · 排队 ${num(m.queued_total)}`;
+/* 页面首次进入才拉数据；之后每次进入刷新当前页数据（不碰其它页） */
+export async function go(tab, opts={}){
+  const page = PAGES[tab] || PAGES.overview;
+  const changed = state.tab !== tab;
+  state.tab = tab;
+  const v = document.getElementById("view");
+  const firstPaint = changed || !v || v.innerHTML.trim()==="";
+  if(firstPaint){
+    // 立即渲染骨架（不阻塞），再拉数据。
+    paint(page);
+  }
+  await loadPage(page);
+  if(firstPaint) paint(page);   // 数据到位后只重绘本页
 }
 
-function render(){
-  const page = PAGES[state.tab] || PAGES.overview;
+export async function loadPage(page){
+  if(!page.load) return;
+  progress(true);
+  try{ await page.load(); }
+  catch(e){
+    if(e.status === 401){ renderLogin(false); return; }
+    toast(e.message,"bad");
+  } finally { progress(false); }
+}
+
+/* 当前页动作后刷新：重拉本页数据再重绘（只碰当前页的接口，不整页全刷） */
+export async function renderCurrent(){
+  const page = PAGES[state.tab]||PAGES.overview;
+  await loadPage(page);
+  paint(page);
+}
+
+function paint(page){
   const v = document.getElementById("view");
+  if(!v) return;
   v.innerHTML = page.view();
   if(page.bind) page.bind();
-  // 导航高亮 + 顶栏面包屑
   document.querySelectorAll(".nav a").forEach(a=>{
-    const on = a.getAttribute("href") === "#/"+state.tab;
+    const on = a.dataset.tab === state.tab;
     a.classList.toggle("on", on);
     if(on) a.setAttribute("aria-current","page"); else a.removeAttribute("aria-current");
   });
   const crumb = document.getElementById("crumb");
   if(crumb) crumb.textContent = page.label;
   document.title = `Agnes Hub · ${page.label}`;
+  syncSubline();
+}
+
+function syncSubline(){
+  const el = document.getElementById("subline");
+  if(!el || !state.overviewStats) return;
+  const s = state.overviewStats, m = s.metrics||{};
+  el.textContent = `账号 ${(s.accounts||[]).length} · 429 ${num(m.upstream_429)}`;
 }
 
 function renderShell(){
@@ -74,77 +106,62 @@ function renderShell(){
   <div class="shell">
     <aside class="sidebar" aria-label="主导航">
       <div class="brand">
-        <img src="/logo.png" alt="Agnes Hub">
-        <div><b>Agnes Hub</b><div class="sub" id="subline">加载中…</div></div>
+        <img src="/logo.png" alt="">
+        <div><b>Agnes Hub</b><div class="sub" id="subline">—</div></div>
       </div>
       <nav class="nav">
-        <div class="nav-label">监控</div>
-        ${["overview","queue","jobs","logs"].map(k=>navLink(k)).join("")}
-        <div class="nav-label">资源</div>
-        ${["accounts","keys","intent"].map(k=>navLink(k)).join("")}
-        <div class="nav-label">管理</div>
-        ${["settings","about"].map(k=>navLink(k)).join("")}
+        ${GROUPS.map(([g, keys])=>keys.map(k=>`
+          <a href="#/${k}" data-tab="${k}">${icon(PAGES[k].icon)}${PAGES[k].label}</a>`).join("")).join("")}
       </nav>
       <div class="side-foot">
-        <button class="sm icon-btn" id="btnTheme" title="主题：自动 / 暗 / 亮">🌓</button>
-        <button class="sm icon-btn" id="btnRefresh" title="刷新数据">⟳</button>
-        <button class="sm icon-btn" id="btnPw" title="修改密码">🔒</button>
-        <button class="sm icon-btn danger" id="btnLogout" title="退出登录">⏻</button>
+        <button class="icon-btn" id="btnTheme" title="切换主题">${icon("monitor")}</button>
+        <button class="icon-btn" id="btnPw" title="修改密码">${icon("lock")}</button>
+        <button class="icon-btn danger" id="btnLogout" title="退出">${icon("logout")}</button>
       </div>
     </aside>
     <main class="main">
       <header class="topbar">
         <span class="crumb" id="crumb">总览</span>
         <span class="grow"></span>
-        <span class="pill ok" title="每秒自动采样运行实况"><span class="dot"></span>实时</span>
-        <button class="sm" id="btnRefreshTop">刷新</button>
+        <button class="sm" id="btnRefresh">${icon("refresh",14)}刷新</button>
       </header>
       <div class="content">
         <div id="toast" class="banner hide" role="status" aria-live="polite"></div>
-        <div id="mustChange" class="hide"></div>
         <div id="view"></div>
       </div>
     </main>
   </div>`;
-  document.getElementById("btnTheme").onclick = cycleTheme;
-  document.getElementById("btnRefresh").onclick = ()=>refresh();
-  document.getElementById("btnRefreshTop").onclick = ()=>refresh();
+  document.getElementById("btnTheme").onclick = ()=>{ cycleTheme(); };
+  document.getElementById("btnRefresh").onclick = ()=>loadPage(PAGES[state.tab]||PAGES.overview);
   document.getElementById("btnLogout").onclick = async ()=>{ await api("/api/logout",{method:"POST"}); location.reload(); };
   document.getElementById("btnPw").onclick = changePasswordModal;
   syncThemeIcon();
 }
 
-function navLink(k){
-  const p = PAGES[k];
-  return `<a href="#/${k}" title="${p.label}"><span class="ico">${p.icon}</span>${p.label}</a>`;
-}
-
-/* 改密：模态表单（替代 prompt()），带长度校验与二次确认 */
 function changePasswordModal(){
   openModal(`
-  <div class="modal-back" onclick="if(event.target===this)closeModal()">
-    <div class="modal" style="max-width:420px">
-      <h2>修改管理员密码</h2>
-      <div class="modal-sub">改密后所有已登录会话立即失效（包括本会话）。</div>
+  <div class="modal-back" data-close="1">
+    <div class="modal" style="max-width:380px">
+      <h2>修改密码</h2>
+      <div class="modal-sub">改密后所有会话立即失效</div>
       <div><label>新密码（至少 6 位）</label><input id="npw1" type="password" autocomplete="new-password"></div>
       <div style="margin-top:10px"><label>确认新密码</label><input id="npw2" type="password" autocomplete="new-password"></div>
-      <div class="row" style="margin-top:16px;justify-content:flex-end">
-        <button onclick="closeModal()">取消</button>
+      <div class="row" style="margin-top:16px;display:flex;justify-content:flex-end;gap:8px">
+        <button data-close="1">取消</button>
         <button class="primary" id="btnDoPw">确认修改</button>
       </div>
     </div>
   </div>`);
-  const doIt = async ()=>{
+  document.getElementById("btnDoPw").onclick = async ()=>{
     const a=document.getElementById("npw1").value, b=document.getElementById("npw2").value;
     if(a.length<6){ toast("密码至少 6 位","bad"); return; }
     if(a!==b){ toast("两次输入不一致","bad"); return; }
     try{
       await api("/api/password",{method:"POST",body:JSON.stringify({new_password:a})});
-      state.session.must_change_password=false; closeModal();
-      toast("密码已修改，下次登录使用新密码","good");
+      state.session && (state.session.must_change_password=false); closeModal();
+      toast("密码已修改","good");
     }catch(e){ toast(e.message,"bad"); }
   };
-  document.getElementById("btnDoPw").onclick = doIt;
   document.getElementById("npw1").focus();
 }
 
@@ -153,24 +170,24 @@ function renderLogin(mustChange){
   <div class="login-wrap">
     <div class="login">
       <div class="card">
-        <div class="brand-big">
-          <img src="/logo.png" alt="Agnes Hub">
-          <div><h1>Agnes Hub</h1><div class="muted" style="font-size:12px">聚合网关 · RPM 排队限流控制台</div></div>
+        <div style="display:flex;align-items:center;gap:9px;margin-bottom:16px">
+          <img src="/logo.png" alt="" style="width:26px;height:26px;border-radius:6px">
+          <div><h1>Agnes Hub</h1><div class="tagline" style="margin:0">聚合网关控制台</div></div>
           <span style="flex:1"></span>
-          <button class="sm icon-btn" id="btnTheme" title="主题：自动 / 暗 / 亮">🌓</button>
+          <button class="ghost icon-btn" id="btnTheme" title="切换主题">${icon("monitor")}</button>
         </div>
         <div id="toast" class="banner hide" role="status" aria-live="polite"></div>
         <label for="pw">管理员密码</label>
-        <input id="pw" type="password" placeholder="输入管理员密码" autocomplete="current-password">
-        <button class="primary" id="btnLogin" style="width:100%;margin-top:14px;height:38px">登 录</button>
-        ${mustChange?`<div class="banner warn" style="margin-top:12px">首次登录，建议先在「🔒」里修改默认密码。</div>`:""}
-        <div class="hint">登录状态保持 7 天 · 改密后所有会话立即失效</div>
+        <input id="pw" type="password" placeholder="输入密码" autocomplete="current-password">
+        <button class="primary" id="btnLogin" style="width:100%;margin-top:12px;height:36px;justify-content:center">登录</button>
+        ${mustChange?`<div class="banner warn" style="margin:12px 0 0">当前为默认密码，建议先修改</div>`:""}
+        <div class="foot">登录状态保持 7 天</div>
       </div>
     </div>
   </div>`;
   document.getElementById("btnTheme").onclick = cycleTheme;
   syncThemeIcon();
-  const go = async ()=>{
+  const goLogin = async ()=>{
     const btn = document.getElementById("btnLogin");
     btn.disabled = true; btn.textContent = "登录中…";
     try{
@@ -179,38 +196,33 @@ function renderLogin(mustChange){
       await boot();
     }catch(e){
       toast(e.message,"bad");
-      btn.disabled=false; btn.textContent="登 录";
-      document.getElementById("pw").focus(); document.getElementById("pw").select();
+      btn.disabled=false; btn.textContent="登录";
+      document.getElementById("pw").select();
     }
   };
-  document.getElementById("btnLogin").onclick = go;
-  document.getElementById("pw").onkeydown = e=>{ if(e.key==="Enter") go(); };
+  document.getElementById("btnLogin").onclick = goLogin;
+  document.getElementById("pw").onkeydown = e=>{ if(e.key==="Enter") goLogin(); };
   document.getElementById("pw").focus();
 }
 
 async function boot(){
   if(!state.session || !state.session.logged_in){ renderLogin(false); return; }
   renderShell();
-  await refresh();
+  // 不预置 state.tab：go() 依据 state.tab!==tab 判定首绘，提前赋值会跳过 paint
+  await go(routeFromHash());
 }
 
-// hash 路由:#/overview ...
 function routeFromHash(){
   const h = (location.hash||"").replace(/^#\/?/,"").split("?")[0];
   return PAGES[h] ? h : "overview";
 }
-window.addEventListener("hashchange", async ()=>{
-  const t = routeFromHash();
-  if(t !== state.tab){ state.tab = t; render(); }
-});
-
+window.addEventListener("hashchange", ()=>{ go(routeFromHash()); });
 window.__on401 = ()=>{ state.session=null; renderLogin(false); };
 
 window.addEventListener("DOMContentLoaded", async ()=>{
   try{
     const s = await api("/api/session");
     state.session = s;
-    state.tab = routeFromHash();
     if(s.logged_in) await boot(); else renderLogin(s.must_change_password);
   }catch(e){ renderLogin(false); }
 });
