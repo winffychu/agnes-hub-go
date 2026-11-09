@@ -103,10 +103,21 @@ export function drawLive(){
   const sums=new Array(meta.length).fill(0);
   for(const col of cols){ for(let i=0;i<meta.length;i++){ sums[i]+=(col[i]||0); } }
   const lt=sums.reduce((a,b)=>a+b,0)||0;
-  document.getElementById("lgAcc").innerHTML = meta.map((m,i)=>{
-    const pct = lt>0 ? Math.round((sums[i]||0)/lt*100) : 0;
-    return `<span class="lg"><i style="background:${m.color}"></i>${esc(m.name||m.id)} ${pct}%</span>`;
-  }).join("") || `<span class="muted" style="font-size:12px">还没有账号</span>`;
+  // 图例降噪：账号多时只展示有消耗的账号 + 「其余 N 个 0%」收敛项，避免图例墙
+  const LEGEND_MAX = 12;
+  const order = meta.map((m,i)=>({m,i,v:sums[i]||0}))
+    .sort((a,b)=>b.v-a.v);
+  const active = order.filter(x=>x.v>0);
+  const items = lt>0
+    ? (active.length<=LEGEND_MAX ? active : active.slice(0,LEGEND_MAX))
+    : order.slice(0, LEGEND_MAX);
+  const restCount = meta.length - items.length;
+  let legendHtml = items.map(x=>{
+    const pct = lt>0 ? Math.round(x.v/lt*100) : 0;
+    return `<span class="lg"><i style="background:${x.m.color}"></i>${esc(x.m.name||x.m.id)} ${pct}%</span>`;
+  }).join("");
+  if(restCount>0) legendHtml += `<span class="lg" style="color:var(--muted)">+ 其余 ${restCount} 个账号${lt>0?"（0%）":""}</span>`;
+  document.getElementById("lgAcc").innerHTML = legendHtml || `<span class="muted" style="font-size:12px">还没有账号</span>`;
 }
 
 async function liveTick(){
