@@ -60,8 +60,8 @@ function rowHtml(a, idx){
     <td class="num" style="white-space:nowrap">${num(a.stats?.requests)}<div class="cell-sub">错 ${num(a.stats?.errors)}</div></td>
     <td style="white-space:nowrap">
       <button class="sm primary" data-act="edit" data-id="${esc(a.id)}">编辑</button>
-      <button class="sm" data-act="test" data-id="${esc(a.id)}">测试</button>
-      <button class="sm" data-act="toggle" data-id="${esc(a.id)}" data-on="${a.enabled?1:0}">${a.enabled?"停用":"启用"}</button>
+      <button class="sm ghost" data-act="test" data-id="${esc(a.id)}">测试</button>
+      <button class="sm ghost" data-act="toggle" data-id="${esc(a.id)}" data-on="${a.enabled?1:0}">${a.enabled?"停用":"启用"}</button>
       <button class="sm ghost danger" data-act="del" data-id="${esc(a.id)}" data-name="${esc(a.name)}" title="删除">${icon("trash",13)} 删除</button>
     </td>
   </tr>`;

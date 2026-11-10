@@ -117,8 +117,9 @@ function renderShell(){
         <div><b>Agnes Hub</b><div class="sub" id="subline">—</div></div>
       </div>
       <nav class="nav">
-        ${GROUPS.map(([g, keys])=>keys.map(k=>`
-          <a href="#/${k}" data-tab="${k}">${icon(PAGES[k].icon)}${PAGES[k].label}</a>`).join("")).join("")}
+        ${GROUPS.map(([g, keys])=>`
+          <div class="nav-sec"><div class="sec-title">${g}</div>${keys.map(k=>`
+          <a href="#/${k}" data-tab="${k}">${icon(PAGES[k].icon)}${PAGES[k].label}</a>`).join("")}</div>`).join("")}
       </nav>
       <div class="side-foot">
         <button class="icon-btn" id="btnTheme" title="切换主题">${icon("monitor")}</button>

@@ -76,10 +76,10 @@ export function viewOverview(){
   return `
   ${banner}
   <div class="grid g4" style="margin-bottom:14px">
-    ${kpiCard({label:"请求总数",value:num(m.requests_total),note:okRate!=null?`成功率 ${okRate}%`:undefined})}
-    ${kpiCard({tone:errTotal?"warn":"good",label:"错误",value:num(errTotal)})}
-    ${kpiCard({tone:ulsKpiTone(s),label:"上游 429",value:num(m.upstream_429),note:ulsNote(s)})}
-    ${kpiCard({label:"账号 / 密钥",value:`${num(accs.length)} <small>/</small> ${num(s.keys)}`,note:accs.filter(a=>a.enabled).length+` 个启用`})}
+    ${kpiCard({icon:"activity",label:"请求总数",value:num(m.requests_total),note:okRate!=null?`成功率 ${okRate}%`:undefined})}
+    ${kpiCard({icon:"alert",tone:errTotal?"warn":"good",label:"错误",value:num(errTotal),note:errTotal?"含全部失败请求":"零错误"})}
+    ${kpiCard({icon:"shield",tone:ulsKpiTone(s),label:"上游 429",value:num(m.upstream_429),note:ulsNote(s)})}
+    ${kpiCard({icon:"users",label:"账号 / 密钥",value:`${num(accs.length)} <small>/</small> ${num(s.keys)}`,note:accs.filter(a=>a.enabled).length+` 个启用`})}
   </div>
 
   <div class="card">

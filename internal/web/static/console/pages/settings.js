@@ -56,8 +56,21 @@ export function viewSettings(){
   const saveBtn = zone=>`<div class="savebar">
     <span class="dirty-hint" data-dirtyhint="${zone}" style="display:none">有未保存的更改</span>
     <button class="primary sm" data-save="${zone}">保存本区</button></div>`;
+  // 顶部 tab 导航（对标 sub2api settings-tabs-shell）：5 区切换，display 显隐不改 DOM
+  const TABS = [
+    ["scenario","compass","运行情景"],
+    ["auto","zap","统一入口"],
+    ["throttle","clock","节流排队"],
+    ["route","shuffle","路由重试"],
+    ["record","file","记录迁移"],
+  ];
+  const saved = (()=>{ try{ return localStorage.getItem("agnes_set_tab")||"scenario"; }catch(e){ return "scenario"; } })();
+  const tabNav = `<div class="tabs-shell" role="tablist" aria-label="设置分区">
+    ${TABS.map(([z,ic,txt])=>`<button role="tab" data-tab="${z}" aria-selected="${z===saved}" class="${z===saved?"on":""}">${icon(ic,14)} ${txt}</button>`).join("")}
+  </div>`;
   return `
-  <div class="card" data-zone="scenario">
+  ${tabNav}
+  <div class="card" data-zone="scenario" style="display:${saved==="scenario"?"":"none"}">
     <div class="card-head"><h2>运行情景</h2><span class="grow"></span><span class="desc">一键侧重网关执行方向，即时生效；账号级 RPM 覆盖不受影响</span></div>
     <div style="padding:14px 16px">
     <div class="row" style="align-items:flex-end">
@@ -92,7 +105,7 @@ export function viewSettings(){
     </div>
   </div>
 
-  <div class="card" data-zone="auto">
+  <div class="card" data-zone="auto" style="display:${saved==="auto"?"":"none"}">
     <div class="card-head"><h2>统一模型入口（auto）</h2><span class="grow"></span><span class="desc">意图判定 / 模型偏好 / 动态模型清单</span></div>
     <div style="padding:14px 16px">
     <div class="grid g2">
@@ -128,7 +141,7 @@ export function viewSettings(){
     </div>
   </div>
 
-  <div class="card" data-zone="throttle">
+  <div class="card" data-zone="throttle" style="display:${saved==="throttle"?"":"none"}">
     <div class="card-head"><h2>节流与排队</h2><span class="grow"></span><span class="desc">按语义分三组：限流退让 / 队列形态 / 熔断保护</span></div>
     <div style="padding:14px 16px">
     <fieldset class="fieldset"><legend>① 限流退让（429 后怎么降速）</legend>
@@ -164,7 +177,7 @@ export function viewSettings(){
     </div>
   </div>
 
-  <div class="card" data-zone="route">
+  <div class="card" data-zone="route" style="display:${saved==="route"?"":"none"}">
     <div class="card-head"><h2>路由与重试</h2><span class="grow"></span><span class="desc">粘性 / 换站 / 退避</span></div>
     <div style="padding:14px 16px">
     <div class="grid g2">
@@ -192,7 +205,7 @@ export function viewSettings(){
     </div>
   </div>
 
-  <div class="card" data-zone="record">
+  <div class="card" data-zone="record" style="display:${saved==="record"?"":"none"}">
     <div class="card-head"><h2>优化模式与记录</h2><span class="grow"></span><span class="desc">并发模式 / 图视频库容量</span></div>
     <div style="padding:14px 16px">
     <div class="grid g2">
@@ -209,7 +222,7 @@ export function viewSettings(){
     </div>
   </div>
 
-  <div class="card">
+  <div class="card" data-migrate style="display:${saved==="record"?"":"none"}">
     <div class="card-head"><h2>迁移</h2><span class="grow"></span><span class="desc">导出/导入配置与账号</span></div>
     <div style="padding:14px 16px" class="row">
       <button id="btnExport" title="不含账号 API Key 明文，可安全归档分享">${icon("file",14)}导出（不含密钥）</button>
@@ -347,6 +360,21 @@ window.addEventListener("hashchange", ()=>{
 });
 
 export function bindSettingsEvents(){
+  // 顶部 tab 切换（display 显隐，DOM 全保留：validateZone/脏追踪/保存按钮不受影响）
+  const showTab = z=>{
+    document.querySelectorAll(".card[data-zone]").forEach(c=>{ c.style.display = c.dataset.zone===z ? "" : "none"; });
+    const mig = document.querySelector(".card[data-migrate]");
+    if(mig) mig.style.display = z==="record" ? "" : "none";
+    document.querySelectorAll(".tabs-shell button[data-tab]").forEach(b=>{
+      const on = b.dataset.tab===z;
+      b.classList.toggle("on", on);
+      b.setAttribute("aria-selected", on);
+    });
+    try{ localStorage.setItem("agnes_set_tab", z); }catch(e){}
+  };
+  document.querySelectorAll(".tabs-shell button[data-tab]").forEach(b=>{
+    b.onclick = ()=>showTab(b.dataset.tab);
+  });
   // 分区保存：校验 → POST 本区字段 → 清脏标记
   document.querySelectorAll("button[data-save]").forEach(b=>{
     b.onclick = async ()=>{

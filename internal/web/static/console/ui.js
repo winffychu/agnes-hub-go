@@ -89,13 +89,25 @@ function fallbackCopy(text,done){
   document.body.removeChild(ta);
   done(ok); if(!ok && location && location.hostname!=="localhost"){ toast("复制失败，请手动全选 pre 内文本","bad"); }
 }
-/* KPI 卡片：极简数值卡。tone 只染数值（tgood/twarn/tbad），不再有图标彩块。 */
-export function kpiCard({tone="", label="", value="", unit="", note=""}){
+/* KPI 卡片 v2（对标 sub2api stat-card）：彩底图标块 + label + 大数字 + 副指标。
+   传 icon（icons.js 图标名）→ .card.kpi2 stat-card 结构；不传 → 旧 .kpi 结构（about.js 兼容）。
+   tone 只染图标块与数值（tgood/twarn/tbad），默认 primary。 */
+export function kpiCard({tone="", label="", value="", unit="", note="", icon:name}){
   const cls = tone==="good"||tone==="ok" ? "tgood" : tone==="warn" ? "twarn" : (tone==="bad"||tone==="off") ? "tbad" : "";
-  return `<div class="kpi ${cls}">
-    <div class="k">${esc(label)}</div>
-    <div class="v">${value}${unit?`<small>${esc(unit)}</small>`:""}</div>
-    ${note?`<div class="note">${esc(note)}</div>`:""}
+  if(!name){
+    return `<div class="kpi ${cls}">
+      <div class="k">${esc(label)}</div>
+      <div class="v">${value}${unit?`<small>${esc(unit)}</small>`:""}</div>
+      ${note?`<div class="note">${esc(note)}</div>`:""}
+    </div>`;
+  }
+  const ic = `<div class="stat-icon ${cls ? cls.replace("t","") : "primary"}">${icon(name,21)}</div>`;
+  return `<div class="card card-hover kpi2 ${cls}">
+    <div class="stat-card">${ic}<div style="min-width:0">
+      <div class="k">${esc(label)}</div>
+      <div class="v">${value}${unit?`<small>${esc(unit)}</small>`:""}</div>
+      ${note?`<div class="note">${esc(note)}</div>`:""}
+    </div></div>
   </div>`;
 }
 /* 空态：SVG 图标 + 一行提示 */
